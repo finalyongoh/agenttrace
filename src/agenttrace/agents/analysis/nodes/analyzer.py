@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import re
-from agenthub_analysis.criteria.agent_type_keywords import AGENT_TYPE_KEYWORDS
-from agenthub_analysis.state import AnalysisState
+from agenttrace.agents.analysis.criteria.agent_type_keywords import AGENT_TYPE_KEYWORDS
+from agenttrace.agents.analysis.state import AnalysisState
 
 
 def _score_keywords(text: str, keywords: list[str]) -> float:

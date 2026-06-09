@@ -4,13 +4,13 @@ from typing import Literal
 
 from langgraph.graph import END, START, StateGraph
 
-from agenthub_analysis.state import AnalysisState
-from agenthub_analysis.nodes.collect_snapshot import collect_snapshot
-from agenthub_analysis.nodes.analyzer import analyzer
-from agenthub_analysis.nodes.evidence_scout import evidence_scout
-from agenthub_analysis.nodes.risk_and_followup import risk_and_followup_planner
-from agenthub_analysis.nodes.quality_gate import quality_gate
-from agenthub_analysis.nodes.persist_analysis import persist_analysis
+from agenttrace.agents.analysis.state import AnalysisState
+from agenttrace.agents.analysis.nodes.collect_snapshot import collect_snapshot
+from agenttrace.agents.analysis.nodes.analyzer import analyzer
+from agenttrace.agents.analysis.nodes.evidence_scout import evidence_scout
+from agenttrace.agents.analysis.nodes.risk_and_followup import risk_and_followup_planner
+from agenttrace.agents.analysis.nodes.quality_gate import quality_gate
+from agenttrace.agents.analysis.nodes.persist_analysis import persist_analysis
 
 
 def route_after_collect(state: AnalysisState) -> Literal["analyzer", "persist_analysis"]:

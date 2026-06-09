@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agenthub_analysis.state import AnalysisState
+from agenttrace.agents.analysis.state import AnalysisState
 
 
 def collect_snapshot(state: AnalysisState) -> AnalysisState:

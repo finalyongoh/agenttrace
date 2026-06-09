@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from agenthub_analysis.criteria.agent_type_keywords import BANNED_ASSERTIVE_WORDS
-from agenthub_analysis.state import AnalysisState
+from agenttrace.agents.analysis.criteria.agent_type_keywords import BANNED_ASSERTIVE_WORDS
+from agenttrace.agents.analysis.state import AnalysisState
 
 
 def quality_gate(state: AnalysisState) -> AnalysisState:

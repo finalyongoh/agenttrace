@@ -1,8 +1,8 @@
-# AgentHub LangGraph Prototype
+# AgentTrace
 
-`Evidence-first Follow-up Analysis Workflow`를 최소 실행 가능한 MVP로 구현한 LangGraph 프로토타입입니다.
+`Evidence-first Follow-up Analysis Workflow`를 최소 실행 가능한 MVP로 구현한 LangGraph 기반 AgentTrace 프로토타입입니다.
 
-이 프로토타입은 처음부터 LLM API에 의존하지 않습니다. 먼저 규칙 기반으로 다음 흐름을 검증하고, 이후 `agenthub_analysis/nodes/analyzer.py`만 LLM structured output으로 교체할 수 있게 만들었습니다.
+이 프로토타입은 처음부터 LLM API에 의존하지 않습니다. 먼저 규칙 기반으로 다음 흐름을 검증하고, 이후 `src/agenttrace/agents/analysis/nodes/analyzer.py`만 LLM structured output으로 교체할 수 있게 만들었습니다.
 
 ```text
 수집 → 분석 → 근거 탐색 → 위험/팔로우업 → 품질 검사 → 저장
@@ -36,7 +36,7 @@ pip install -U langgraph
 ## 실행
 
 ```bash
-python -m agenthub_analysis.cli data/sample_repo.json --out out/analysis.json
+python -m agenttrace.agents.analysis.cli data/sample_repo.json --out out/analysis.json
 ```
 
 성공하면 `out/analysis.json`에 분석 결과가 저장됩니다.

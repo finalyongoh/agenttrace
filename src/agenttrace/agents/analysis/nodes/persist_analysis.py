@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from agenthub_analysis.state import AnalysisState
+from agenttrace.agents.analysis.state import AnalysisState
 
 
 def _public_analysis(state: AnalysisState) -> dict:

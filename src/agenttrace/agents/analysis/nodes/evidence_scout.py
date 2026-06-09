@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 
-from agenthub_analysis.criteria.agent_type_keywords import EVIDENCE_PATH_HINTS
-from agenthub_analysis.state import AnalysisState
+from agenttrace.agents.analysis.criteria.agent_type_keywords import EVIDENCE_PATH_HINTS
+from agenttrace.agents.analysis.state import AnalysisState
 
 
 CLAIM_KEYWORD_TOKENS = {
