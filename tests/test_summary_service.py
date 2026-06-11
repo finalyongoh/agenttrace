@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import types
 
@@ -229,6 +230,10 @@ def test_get_settings_reads_env_file(tmp_path, monkeypatch):
                 "OPENAI_API_BASE=https://gms.ssafy.io/gmsapi/api.openai.com/v1",
                 "AGENTTRACE_SUMMARY_MODEL=gpt-test-model",
                 "AGENTTRACE_SERVICE_NAME=agenttrace-test",
+                "LANGSMITH_TRACING=true",
+                "LANGSMITH_API_KEY=langsmith-env-file-key",
+                "LANGSMITH_PROJECT=agenthub-local",
+                "LANGSMITH_ENDPOINT=https://api.smith.langchain.com",
             ]
         ),
         encoding="utf-8",
@@ -239,6 +244,10 @@ def test_get_settings_reads_env_file(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("AGENTTRACE_SUMMARY_MODEL", raising=False)
     monkeypatch.delenv("AGENTTRACE_SERVICE_NAME", raising=False)
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGSMITH_ENDPOINT", raising=False)
 
     settings = get_settings()
 
@@ -246,6 +255,39 @@ def test_get_settings_reads_env_file(tmp_path, monkeypatch):
     assert settings.openai_api_base == "https://gms.ssafy.io/gmsapi/api.openai.com/v1"
     assert settings.summary_model == "gpt-test-model"
     assert settings.service_name == "agenttrace-test"
+    assert settings.langsmith_tracing == "true"
+    assert settings.langsmith_api_key == "langsmith-env-file-key"
+    assert settings.langsmith_project == "agenthub-local"
+    assert settings.langsmith_endpoint == "https://api.smith.langchain.com"
+
+
+def test_configure_runtime_environment_exports_langsmith_env(tmp_path, monkeypatch):
+    from agenttrace.config import configure_runtime_environment
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "LANGSMITH_TRACING=true",
+                "LANGSMITH_API_KEY=langsmith-env-file-key",
+                "LANGSMITH_PROJECT=agenthub-local",
+                "LANGSMITH_ENDPOINT=https://api.smith.langchain.com",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGSMITH_ENDPOINT", raising=False)
+
+    configure_runtime_environment()
+
+    assert os.environ["LANGSMITH_TRACING"] == "true"
+    assert os.environ["LANGSMITH_API_KEY"] == "langsmith-env-file-key"
+    assert os.environ["LANGSMITH_PROJECT"] == "agenthub-local"
+    assert os.environ["LANGSMITH_ENDPOINT"] == "https://api.smith.langchain.com"
 
 
 def test_openai_summary_model_receives_env_file_api_key(tmp_path, monkeypatch):
