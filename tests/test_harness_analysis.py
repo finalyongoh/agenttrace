@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from agenttrace.agents.analysis.nodes.harness_analyzer import harness_analyzer
+from agenttrace.agents.analysis.nodes.quality_gate import quality_gate
 from agenttrace.agents.analysis.graph import build_graph
 
 
@@ -145,3 +146,31 @@ def test_low_readme_only_fixture_expected_output():
     assert result["harness_capabilities"]["agent_loop"]["present"] is False
     assert result["harness_capabilities"]["tool_system"]["present"] is False
     assert result["negative_evidence"]
+
+
+def test_quality_gate_errors_when_high_harness_relevance_has_no_evidence():
+    state = {
+        "status": "COMPLETED",
+        "claims": [],
+        "evidence_signals": [
+            {
+                "id": "evidence-1",
+                "path": "src/tools/registry.py",
+                "claim_id": None,
+            }
+        ],
+        "risk_signals": [],
+        "followup_actions": [{"action": "READ_NOW", "reason": "Static evidence exists."}],
+        "harness_relevance": {
+            "level": "high",
+            "reason": "High harness relevance.",
+            "confidence": "high",
+            "evidence": [],
+            "negative_evidence": [],
+        },
+    }
+
+    result = quality_gate(state)
+
+    assert result["status"] == "NEEDS_HUMAN_REVIEW"
+    assert any("harness_relevance" in item for item in result["quality_errors"])

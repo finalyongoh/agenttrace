@@ -50,6 +50,13 @@ def quality_gate(state: AnalysisState) -> AnalysisState:
         for claim_id in missing_claim_evidence:
             warnings.append(f"{claim_id}에 연결된 EvidenceSignal이 없습니다.")
 
+    harness_relevance = state.get("harness_relevance", {})
+    if (
+        harness_relevance.get("level") == "high"
+        and not harness_relevance.get("evidence")
+    ):
+        errors.append("harness_relevance cannot be high without harness evidence.")
+
     text_fields = [
         state.get("classification_reason", ""),
         "\n".join(action.get("reason", "") for action in state.get("followup_actions", [])),
