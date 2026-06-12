@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from agenthub_analysis.state import AnalysisState
+from agenttrace.agents.analysis.state import AnalysisState
 
 
 def _public_analysis(state: AnalysisState) -> dict:
@@ -20,6 +20,10 @@ def _public_analysis(state: AnalysisState) -> dict:
         "risk_signals": state.get("risk_signals", []),
         "followup_actions": state.get("followup_actions", []),
         "followup_guide": state.get("followup_guide", []),
+        "harness_relevance": state.get("harness_relevance", {}),
+        "harness_capabilities": state.get("harness_capabilities", {}),
+        "negative_evidence": state.get("negative_evidence", []),
+        "followup_questions": state.get("followup_questions", []),
         "quality_warnings": state.get("quality_warnings", []),
         "quality_errors": state.get("quality_errors", []),
     }

@@ -1,9 +1,9 @@
 import json
 
-from agenthub_analysis.nodes.analyzer import analyzer
-from agenthub_analysis.nodes.evidence_scout import evidence_scout
-from agenthub_analysis.nodes.quality_gate import quality_gate
-from agenthub_analysis.nodes.risk_and_followup import risk_and_followup_planner
+from agenttrace.agents.analysis.nodes.analyzer import analyzer
+from agenttrace.agents.analysis.nodes.evidence_scout import evidence_scout
+from agenttrace.agents.analysis.nodes.quality_gate import quality_gate
+from agenttrace.agents.analysis.nodes.risk_and_followup import risk_and_followup_planner
 
 
 def test_analyzer_detects_mcp_server():

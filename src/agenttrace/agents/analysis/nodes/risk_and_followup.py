@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
-from agenthub_analysis.criteria.agent_type_keywords import RISKY_README_WORDS
-from agenthub_analysis.state import AnalysisState
+from agenttrace.agents.analysis.criteria.agent_type_keywords import RISKY_README_WORDS
+from agenttrace.agents.analysis.state import AnalysisState
 
 
 CONFIG_FILENAMES = {

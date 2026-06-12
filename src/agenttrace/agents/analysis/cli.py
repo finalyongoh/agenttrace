@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-from agenthub_analysis.graph import build_graph
+from agenttrace.agents.analysis.graph import build_graph
 
 
 def main() -> None:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from agenthub_analysis.criteria.agent_type_keywords import BANNED_ASSERTIVE_WORDS
-from agenthub_analysis.state import AnalysisState
+from agenttrace.agents.analysis.criteria.agent_type_keywords import BANNED_ASSERTIVE_WORDS
+from agenttrace.agents.analysis.state import AnalysisState
 
 
 def quality_gate(state: AnalysisState) -> AnalysisState:
@@ -49,6 +49,13 @@ def quality_gate(state: AnalysisState) -> AnalysisState:
     elif final_status == "UNCERTAIN":
         for claim_id in missing_claim_evidence:
             warnings.append(f"{claim_id}에 연결된 EvidenceSignal이 없습니다.")
+
+    harness_relevance = state.get("harness_relevance", {})
+    if (
+        harness_relevance.get("level") == "high"
+        and not harness_relevance.get("evidence")
+    ):
+        errors.append("harness_relevance cannot be high without harness evidence.")
 
     text_fields = [
         state.get("classification_reason", ""),
