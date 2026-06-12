@@ -64,6 +64,10 @@ class AnalysisState(TypedDict, total=False):
     risk_signals: Annotated[list[dict], operator.add]
     followup_actions: list[dict]
     followup_guide: list[dict]
+    harness_relevance: dict
+    harness_capabilities: dict
+    negative_evidence: Annotated[list[dict], operator.add]
+    followup_questions: list[str]
 
     # Quality / persistence
     quality_warnings: Annotated[list[str], operator.add]
