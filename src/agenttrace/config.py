@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -21,6 +22,7 @@ class Settings:
     langsmith_endpoint: str | None = None
 
 
+@lru_cache()
 def get_settings() -> Settings:
     env_values = _load_dotenv(Path(".env"))
     return Settings(
