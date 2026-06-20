@@ -1,0 +1,25 @@
+Repository: owner/repo
+
+Files:
+README.md
+pyproject.toml
+src/server.py
+
+================================================
+FILE: README.md
+================================================
+# Repo
+Provides an MCP server and tool registration.
+
+================================================
+FILE: pyproject.toml
+================================================
+[project]
+name = "repo"
+
+================================================
+FILE: src/server.py
+================================================
+class Server:
+    def register_tool(self, name):
+        return name
