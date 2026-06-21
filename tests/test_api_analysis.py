@@ -92,6 +92,33 @@ def test_trigger_analysis_concurrency(monkeypatch) -> None:
     assert str(analysis_id) not in active_analyses
 
 
+def test_analysis_api_accepts_v2_backend_payload(monkeypatch) -> None:
+    active_analyses.clear()
+    captured = {}
+
+    async def fake_run(req):
+        captured["req"] = req
+        active_analyses.discard(str(req.analysis_id))
+
+    monkeypatch.setattr("agenttrace.api.analysis.run_pipeline_async", fake_run)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/api/v1/analysis",
+        json={
+            "analysis_id": str(uuid.uuid4()),
+            "repository": {"full_name": "owner/repo", "github_url": "https://github.com/owner/repo"},
+            "snapshot": {"snapshot_id": "snap-1"},
+            "readme_text": "# Repo",
+            "file_tree": ["README.md"],
+            "external_ingest": {"enabled": False, "provider": "gitingest"},
+        },
+    )
+
+    assert response.status_code == 202
+    assert captured["req"].repository["full_name"] == "owner/repo"
+
+
 def test_trigger_analysis_e2e(monkeypatch) -> None:
     active_analyses.clear()
     monkeypatch.setattr("agenttrace.api.analysis.fetch_repo_digest", mock_fetch_repo_digest)

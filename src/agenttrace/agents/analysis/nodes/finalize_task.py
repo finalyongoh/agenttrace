@@ -21,7 +21,7 @@ def finalize_task(state: AnalysisState) -> AnalysisState:
         "task_results": [*state.get("task_results", []), task_result],
         "evidence_signals": state.get("pending_evidence_signals", []),
         "task_traces": task_traces,
-        "current_task_id": None,
+        "current_task_id": "",
     }
 
 

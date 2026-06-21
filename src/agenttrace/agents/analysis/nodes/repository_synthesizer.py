@@ -38,6 +38,8 @@ def repository_synthesizer(state: AnalysisState) -> AnalysisState:
     metadata = state.get("metadata", {}) or {}
     primary_language = metadata.get("primary_language") or metadata.get("language") or "Unknown"
     agent_type = AGENT_TYPE_MAP.get(str(state.get("agent_type", "Unknown")), state.get("agent_type") or "Unknown")
+    if agent_type in {None, "Unknown"}:
+        agent_type = _infer_agent_type(state)
     if agent_type not in {"MCP", "Skill", "Eval", "ToolUse", "Framework", "Other", "Unknown"}:
         agent_type = "Unknown"
 
@@ -51,3 +53,24 @@ def repository_synthesizer(state: AnalysisState) -> AnalysisState:
             },
         }
     }
+
+
+def _infer_agent_type(state: AnalysisState) -> str:
+    metadata = state.get("metadata", {}) or {}
+    text = " ".join([
+        str(metadata.get("description", "")),
+        " ".join(metadata.get("topics", []) or []),
+        state.get("readme", ""),
+        " ".join(item.get("path", "") for item in state.get("file_tree", [])),
+    ]).lower()
+    if "mcp" in text:
+        return "MCP"
+    if "skill" in text:
+        return "Skill"
+    if "eval" in text or "benchmark" in text or "harness" in text:
+        return "Eval"
+    if "tool" in text:
+        return "ToolUse"
+    if "agent" in text or "workflow" in text:
+        return "Framework"
+    return "Unknown"

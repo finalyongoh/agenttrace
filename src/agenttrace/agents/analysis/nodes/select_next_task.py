@@ -12,6 +12,6 @@ def select_next_task(state: AnalysisState) -> AnalysisState:
                 "next_task_id": task["task_id"],
             }
     return {
-        "current_task_id": None,
-        "next_task_id": None,
+        "current_task_id": "",
+        "next_task_id": "",
     }

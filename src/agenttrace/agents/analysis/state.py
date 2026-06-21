@@ -76,6 +76,12 @@ class AnalysisState(TypedDict, total=False):
     next_task_id: str | None
     task_results: list[dict]
     task_traces: list[dict]
+    selected_chunks: list[dict]
+    search_attempt: dict
+    task_parts: list[dict]
+    task_part_results: list[dict]
+    pending_task_result: dict
+    pending_evidence_signals: list[dict]
     evidence_signals: Annotated[list[dict], operator.add]
     risk_signals: Annotated[list[dict], operator.add]
     followup_actions: list[dict]
