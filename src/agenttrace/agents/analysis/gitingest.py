@@ -33,6 +33,18 @@ def build_gitingest_url(
 
 
 def fetch_gitingest_text(url: str) -> str:
+    parsed = urlparse(url)
+    path_parts = [p for p in parsed.path.strip("/").split("/") if p]
+    if path_parts and path_parts[0] != "api":
+        api_path = "/api/" + "/".join(path_parts)
+        url = parsed._replace(path=api_path).geturl()
+
     response = httpx.get(url, timeout=30.0)
     response.raise_for_status()
+    try:
+        data = response.json()
+        if isinstance(data, dict) and "content" in data:
+            return data["content"]
+    except Exception:
+        pass
     return response.text
