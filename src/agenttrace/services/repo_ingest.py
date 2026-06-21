@@ -181,16 +181,38 @@ def _file_tree(value: Any) -> list[str]:
 
 def _tree_lines(value: str) -> list[str]:
     paths: list[str] = []
+    stack: list[str] = []
+    
+    indent_chars = {"│", "├", "└", "─", " ", "┬"}
     for line in value.splitlines():
-        cleaned = (
-            line.strip()
-            .replace("├──", "")
-            .replace("└──", "")
-            .replace("│", "")
-            .strip()
-        )
-        if cleaned and cleaned != "Directory structure:":
-            paths.append(cleaned)
+        if not line.strip() or line.strip() == "Directory structure:":
+            continue
+            
+        prefix_len = 0
+        for char in line:
+            if char in indent_chars:
+                prefix_len += 1
+            else:
+                break
+                
+        prefix = line[:prefix_len]
+        name = line[prefix_len:].strip()
+        if not name:
+            continue
+            
+        level = max(0, (len(prefix) // 4) - 1)
+        is_dir = name.endswith("/")
+        clean_name = name.rstrip("/")
+        
+        stack = stack[:level]
+        stack.append(clean_name)
+        
+        full_path = "/".join(stack)
+        if is_dir:
+            paths.append(full_path + "/")
+        else:
+            paths.append(full_path)
+            
     return paths
 
 

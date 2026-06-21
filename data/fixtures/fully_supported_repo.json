@@ -1,0 +1,19 @@
+{
+  "repository_id": "fixture-fully-supported",
+  "full_name": "acme/fully-supported",
+  "github_url": "https://github.com/acme/fully-supported",
+  "metadata": {
+    "description": "A weather server that supports weather lookup."
+  },
+  "readme": "A weather server that supports weather lookup.",
+  "file_tree": [
+    {"path": "README.md", "type": "file"},
+    {"path": "src/weather.py", "type": "file"}
+  ],
+  "selected_files": [
+    {
+      "path": "src/weather.py",
+      "content": "def lookup():\n    # supports weather lookup\n    pass"
+    }
+  ]
+}

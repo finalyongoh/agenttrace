@@ -61,6 +61,7 @@ class AnalysisState(TypedDict, total=False):
     chunk_index: dict
     precheck_result: dict
     analysis_limitations: dict
+    synthesis: dict
 
     # Analysis result
     status: AnalysisStatus

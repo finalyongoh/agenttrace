@@ -38,38 +38,15 @@ def evidence_scout(state: AnalysisState) -> AnalysisState:
     for text in _claim_texts(state, task):
         query_tokens.update(_tokens(text))
 
-    candidate_chunk_ids: list[str] = []
-    selected_chunk_ids: list[str] = []
-    excluded_chunk_ids: list[str] = []
-    exclusion_reasons: dict[str, str] = {}
-
-    for entry in entries:
-        path = entry.get("file_path", "")
-        path_lower = path.lower()
-        chunk_ids = list(entry.get("chunk_ids", []))
-        candidate_chunk_ids.extend(chunk_ids)
-        path_match = any(target in path_lower for target in target_paths)
-        keyword_match = bool(query_tokens & set(entry.get("keywords", [])))
-        if path_match or keyword_match:
-            selected_chunk_ids.extend(chunk_ids)
-        else:
-            excluded_chunk_ids.extend(chunk_ids)
-            for chunk_id in chunk_ids:
-                exclusion_reasons[chunk_id] = "path and keyword mismatch"
-
     chunks_by_id = chunk_index.get("chunks_by_id", {})
-    selected_chunks = [
-        chunks_by_id[chunk_id]
-        for chunk_id in selected_chunk_ids[:8]
-        if chunk_id in chunks_by_id
-    ]
+    selected_chunks = list(chunks_by_id.values())
     attempt = {
         "attempt": 1,
         "queries": sorted(query_tokens)[:20],
-        "candidate_chunk_ids": candidate_chunk_ids,
-        "selected_chunk_ids": [chunk["chunk_id"] for chunk in selected_chunks],
-        "excluded_chunk_ids": excluded_chunk_ids,
-        "exclusion_reasons": exclusion_reasons,
+        "candidate_chunk_ids": list(chunks_by_id.keys()),
+        "selected_chunk_ids": list(chunks_by_id.keys()),
+        "excluded_chunk_ids": [],
+        "exclusion_reasons": {},
     }
 
     return {
