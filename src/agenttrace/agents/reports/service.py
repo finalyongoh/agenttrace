@@ -9,7 +9,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from agenttrace.agents.reports.schemas import TrendReport, TrendReportRequest
 from agenttrace.config import get_settings
 
-REPORT_PROMPT_VERSION = "weekly-trend-report@1.0.0"
+REPORT_PROMPT_VERSION = "weekly-trend-report@1.3.0"
 
 
 def generate_trend_report(request: TrendReportRequest, *, model: Any) -> TrendReport:
@@ -18,8 +18,9 @@ def generate_trend_report(request: TrendReportRequest, *, model: Any) -> TrendRe
             ("system", _load_prompt()),
             (
                 "human",
-                "Generate the weekly report for {period_start} through {period_end}.\n"
-                "Repository metrics:\n{repositories}",
+                "{period_start}부터 {period_end}까지의 주간 리포트를 작성하세요. "
+                "모든 사용자용 본문은 한국어로 작성하세요.\n"
+                "저장소 지표:\n{repositories}",
             ),
         ]
     ).invoke(
@@ -40,7 +41,7 @@ def generate_trend_report(request: TrendReportRequest, *, model: Any) -> TrendRe
     result.model_name = get_settings().summary_model
     result.prompt_version = REPORT_PROMPT_VERSION
     if len(request.repositories) < 3:
-        result.limitations.append("Available repository history was too small for a broad trend claim.")
+        result.limitations.append("폭넓은 추세를 판단하기에는 사용 가능한 저장소 이력이 부족합니다.")
     return result
 
 

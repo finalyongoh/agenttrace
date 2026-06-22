@@ -44,4 +44,4 @@ class TrendReport(BaseModel):
     limitations: list[str] = Field(default_factory=list)
     generated_at: str | None = None
     model_name: str | None = None
-    prompt_version: str = "weekly-trend-report@1.0.0"
+    prompt_version: str = "weekly-trend-report@1.3.0"
