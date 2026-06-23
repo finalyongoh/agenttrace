@@ -11,12 +11,12 @@ AnalysisJobStatus = Literal["queued", "running", "completed", "completed_with_li
 COMMON_ANALYSIS_AREAS: tuple[tuple[str, str], ...] = (
     ("project-purpose", "프로젝트 목적과 주요 기능"),
     ("execution-flow", "진입점과 핵심 실행 흐름"),
-    ("architecture-components", "아키텍처와 컴포넌트 구조"),
-    ("agent-patterns", "Agent·LLM 기술과 설계 패턴"),
-    ("tool-integrations", "도구와 외부 연동"),
-    ("data-state-memory", "데이터·상태·메모리 관리"),
-    ("configuration-runtime", "설정·실행·배포 방식"),
-    ("tests-evaluation-limitations", "테스트·평가·정적 분석 한계"),
+    ("architecture-and-modules", "아키텍처와 모듈 관계"),
+    ("agent-and-llm", "Agent·LLM 핵심 로직"),
+    ("tools-and-integrations", "Tool·외부 서비스 연동"),
+    ("state-and-storage", "상태·메모리·데이터 저장"),
+    ("configuration-and-deployment", "설정·실행·배포 방법"),
+    ("examples-and-tests", "예제·테스트·확장 지점"),
 )
 
 
