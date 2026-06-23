@@ -90,7 +90,9 @@ def finalize_analysis(state: AnalysisState) -> AnalysisState:
     _batch_start = time.perf_counter()
     area_findings = state.get("area_findings") or _build_area_findings(state, evidence_refs)
     batch_wall_ms = int((time.perf_counter() - _batch_start) * 1000)
+    _synthesis_start = time.perf_counter()
     report_sections = state.get("report_sections") or _build_report_sections(state, area_findings, evidence_refs)
+    synthesis_ms = int((time.perf_counter() - _synthesis_start) * 1000)
     
     # Map claim_id to evidence_signal_ids from task results
     claim_signals = {}
@@ -150,6 +152,7 @@ def finalize_analysis(state: AnalysisState) -> AnalysisState:
         evidence_refs=len(result.evidence_refs),
         status=result.analysis_status,
         batch_wall_ms=batch_wall_ms,
+        synthesis_ms=synthesis_ms,
         duration_ms=int((time.perf_counter() - _t) * 1000),
     )
     return {"final_result": result.model_dump()}
@@ -439,8 +442,8 @@ def _build_report_sections(state: AnalysisState, area_findings: list[dict], evid
             return _build_mock_report_sections(area_findings)
 
         readme = state.get("readme") or ""
-        area_findings_str = json.dumps(area_findings, indent=2, ensure_ascii=False)
-        evidence_refs_str = json.dumps(evidence_refs, indent=2, ensure_ascii=False)
+        area_findings_str = _compact_area_findings(area_findings)
+        evidence_refs_str = _compact_evidence_refs(evidence_refs)
 
         model = build_openai_analysis_model()
         structured_model = model.with_structured_output(ReportSynthesisResult)
@@ -601,3 +604,42 @@ def _source_type(path: str) -> str:
     if lowered.endswith((".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs")):
         return "code"
     return "other"
+
+
+def _compact_area_findings(area_findings: list[dict]) -> str:
+    """Report synthesis용 compact payload.
+
+    전달 대상: _build_report_sections의 LLM 입력 prompt에만 사용.
+    저장 대상인 AnalysisResult의 area_findings는 원본 그대로 유지.
+    """
+    compact = []
+    for af in area_findings:
+        compact.append({
+            "area_id": af.get("area_id"),
+            "status": af.get("status"),
+            "summary": af.get("summary"),
+            "findings": [
+                {"content": f.get("content"), "type": f.get("type")}
+                for f in af.get("findings", [])[:3]
+            ],
+            "limitations": af.get("limitations", [])[:2],
+            "unresolved_questions": af.get("unresolved_questions", [])[:2],
+        })
+    return json.dumps(compact, indent=2, ensure_ascii=False)
+
+
+def _compact_evidence_refs(evidence_refs: list[dict]) -> str:
+    """Report synthesis용 compact payload: id/path/description만 포함.
+
+    content_excerpt, content_hash 등 대용량 필드 제외.
+    저장 대상인 AnalysisResult의 evidence_refs는 원본 그대로 유지.
+    """
+    compact = [
+        {
+            "id": r.get("id"),
+            "path": r.get("path"),
+            "description": r.get("description"),
+        }
+        for r in evidence_refs
+    ]
+    return json.dumps(compact, indent=2, ensure_ascii=False)

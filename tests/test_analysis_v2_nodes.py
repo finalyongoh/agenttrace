@@ -769,3 +769,53 @@ def test_build_area_findings_invokes_all_three_batches(monkeypatch):
 
     # 배치 3개가 모두 호출됨
     assert mock_model.invoke.call_count == 3
+
+
+from agenttrace.agents.analysis.nodes.finalize_analysis import (
+    _compact_area_findings,
+    _compact_evidence_refs,
+)
+
+
+def test_compact_area_findings_reduces_size_and_preserves_unresolved():
+    findings = [
+        {
+            "area_id": "project-purpose",
+            "area_name": "프로젝트 목적과 주요 기능",
+            "status": "confirmed",
+            "summary": "이 프로젝트는 X를 합니다.",
+            "findings": [
+                {"content": f"finding {i}", "type": "fact", "evidence_refs": [f"ref-{i}"]}
+                for i in range(1, 5)
+            ],
+            "limitations": ["한계 1", "한계 2", "한계 3"],
+            "unresolved_questions": ["질문 A", "질문 B", "질문 C"],
+        }
+    ]
+    result = _compact_area_findings(findings)
+    assert "project-purpose" in result
+    assert "confirmed" in result
+    # top-3 findings만 포함
+    assert "finding 4" not in result
+    # limitations top-2만 포함
+    assert "한계 3" not in result
+    # unresolved_questions top-2 보존 (섹션 11 품질)
+    assert "질문 A" in result
+    assert "질문 B" in result
+    assert "질문 C" not in result
+
+
+def test_compact_evidence_refs_excludes_content_excerpt():
+    refs = [
+        {
+            "id": "ref-1",
+            "path": "src/main.py",
+            "description": "설명",
+            "content_excerpt": "def main(): ...",
+            "symbol": None,
+        }
+    ]
+    result = _compact_evidence_refs(refs)
+    assert "ref-1" in result
+    assert "src/main.py" in result
+    assert "def main():" not in result  # content_excerpt 제외
