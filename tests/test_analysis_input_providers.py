@@ -51,3 +51,19 @@ def test_assembler_records_limited_mode_when_gitingest_fails():
     assert assembled.analysis_mode == "limited"
     assert "gitingest_file_content" in assembled.missing_inputs
     assert assembled.input_manifest["external_ingest_error"] == "boom"
+
+
+def test_file_path_scoring():
+    from agenttrace.agents.analysis.github_provider import _score_file_path
+
+    # Business logic paths get a high weight
+    assert _score_file_path("src/core/agent.py") == 100
+    assert _score_file_path("lib/utils.ts") == 100
+    # Docs get negative points
+    assert _score_file_path("README.md") == -50
+    assert _score_file_path("docs/index.mdx") == -50
+    # Configuration files get a slight penalty
+    assert _score_file_path("package.json") == -20
+    # Normal files default to 0
+    assert _score_file_path("config.py") == 0
+

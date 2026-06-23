@@ -52,6 +52,24 @@ def _is_source_file(path: str, size: int) -> bool:
     return any(lower.endswith(ext) for ext in SOURCE_EXTENSIONS)
 
 
+def _score_file_path(path: str) -> int:
+    lower = path.lower()
+    # 1. Core source directory weights
+    for source_dir in ["src/", "lib/", "app/", "packages/", "srcs/"]:
+        if lower.startswith(source_dir) or f"/{source_dir}" in lower:
+            return 100
+    
+    # 2. Documents and minor metadata penalties
+    if lower.endswith(".md") or lower.endswith(".mdx") or "license" in lower or ".github/" in lower:
+        return -50
+        
+    # 3. Environment configuration files penalties
+    if any(lower.endswith(ext) for ext in [".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"]):
+        return -20
+        
+    return 0
+
+
 class GitHubInputProvider:
     """GitHub REST API로 소스파일을 직접 수집하는 Provider."""
 
@@ -82,12 +100,15 @@ class GitHubInputProvider:
         if data.get("truncated"):
             logger.warning("GitHub tree response truncated for %s/%s", owner, repo)
 
-        # 2. 소스 파일 필터링
-        blobs = [
+        # 2. Source file filtering and importance sorting
+        all_blobs = [
             item for item in data.get("tree", [])
             if item["type"] == "blob"
             and _is_source_file(item["path"], item.get("size", 0))
-        ][:MAX_FILES]
+        ]
+        # Sort so that highest score files come first
+        all_blobs.sort(key=lambda item: _score_file_path(item["path"]), reverse=True)
+        blobs = all_blobs[:MAX_FILES]
 
         logger.info(
             "GitHub provider: %d source files selected from %s/%s@%s",
