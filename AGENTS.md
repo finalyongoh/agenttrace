@@ -31,3 +31,8 @@
 - Add or update tests before changing behavior.
 - Run focused tests first, then full `pytest` before claiming completion.
 - Treat LLM output as untrusted unless the code explicitly constrains or re-derives fields from deterministic inputs.
+
+## RTK (Rust Token Killer) Command Proxy
+
+- Always prefix terminal commands with `rtk` (e.g., `rtk git status`, `rtk pytest`, `rtk grep`, `rtk find`) to minimize token consumption by 60-90%.
+- Use `rtk gain` to view token savings stats.

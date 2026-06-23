@@ -10,3 +10,8 @@ out/*.json
 temp_docs_repo/
 tmp/
 
+# Local agents configuration and runtime artifacts
+.langgraph_api/
+.agents/
+
+
