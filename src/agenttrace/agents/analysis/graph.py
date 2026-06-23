@@ -7,7 +7,9 @@ from langgraph.graph import END, START, StateGraph
 from agenttrace.agents.analysis.nodes.analysis_planner import analysis_planner
 from agenttrace.agents.analysis.nodes.analysis_precheck import analysis_precheck
 from agenttrace.agents.analysis.nodes.claim_analyzer import claim_analyzer
+from agenttrace.agents.analysis.nodes.chunk_embedder import chunk_embedder
 from agenttrace.agents.analysis.nodes.collect_inputs import collect_inputs
+from agenttrace.agents.analysis.nodes.content_indexer import content_indexer
 from agenttrace.agents.analysis.nodes.content_preprocessor import content_preprocessor
 from agenttrace.agents.analysis.nodes.critical_error_handler import critical_error_handler
 from agenttrace.agents.analysis.nodes.evidence_evaluator import evidence_evaluator
@@ -43,11 +45,23 @@ def route_after_quality(state: AnalysisState) -> Literal["critical_error_handler
     return "persist_analysis"
 
 
-def build_graph():
+def build_graph(*, content_index_store=None, embedding_service=None, embedding_store=None):
     builder = StateGraph(AnalysisState)
 
     builder.add_node("collect_inputs", collect_inputs)
     builder.add_node("content_preprocessor", content_preprocessor)
+    builder.add_node(
+        "content_indexer",
+        lambda state: content_indexer(state, store=content_index_store),
+    )
+    builder.add_node(
+        "chunk_embedder",
+        lambda state: chunk_embedder(
+            state,
+            embedding_service=embedding_service,
+            store=embedding_store,
+        ),
+    )
     builder.add_node("analysis_precheck", analysis_precheck)
     builder.add_node("claim_analyzer", claim_analyzer)
     builder.add_node("analysis_planner", analysis_planner)
@@ -67,7 +81,9 @@ def build_graph():
 
     builder.add_edge(START, "collect_inputs")
     builder.add_edge("collect_inputs", "content_preprocessor")
-    builder.add_edge("content_preprocessor", "analysis_precheck")
+    builder.add_edge("content_preprocessor", "content_indexer")
+    builder.add_edge("content_indexer", "chunk_embedder")
+    builder.add_edge("chunk_embedder", "analysis_precheck")
     builder.add_conditional_edges(
         "analysis_precheck",
         route_after_precheck,

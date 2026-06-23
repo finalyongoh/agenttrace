@@ -1,0 +1,33 @@
+services:
+  api:
+    build: .
+    image: agenttrace:latest
+    container_name: agenttrace-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://agenthub_user:agenthub_password@agenthub-postgres:5432/agenthub
+    networks:
+      - agenthub-backend_default
+    restart: unless-stopped
+
+  worker:
+    build: .
+    image: agenttrace:latest
+    container_name: agenttrace-worker
+    command: ["uv", "run", "agenttrace-worker"]
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://agenthub_user:agenthub_password@agenthub-postgres:5432/agenthub
+    networks:
+      - agenthub-backend_default
+    restart: unless-stopped
+    depends_on:
+      - api
+
+networks:
+  agenthub-backend_default:
+    external: true

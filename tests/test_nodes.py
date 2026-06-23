@@ -6,6 +6,7 @@ from agenttrace.agents.analysis.nodes.collect_snapshot import collect_snapshot
 from agenttrace.agents.analysis.nodes.evidence_scout import evidence_scout
 from agenttrace.agents.analysis.nodes.quality_gate import quality_gate
 from agenttrace.agents.analysis.nodes.risk_and_followup import risk_and_followup_planner
+from agenttrace.config import get_settings
 
 
 def test_analyzer_detects_mcp_server():
@@ -198,7 +199,8 @@ def test_collect_snapshot_with_commit_sha_in_state():
     }
     result = collect_snapshot(state)
     assert result["commit_sha"] == "abcdef123456"
-    assert result["ingest_api_url"] == "https://gitingest.com/api/acme/harness/commit/abcdef123456"
+    base_url = get_settings().repo_ingest_base_url.rstrip("/")
+    assert result["ingest_api_url"] == f"{base_url}/api/acme/harness/commit/abcdef123456"
     assert "스냅샷 생성 시점의 commit_sha와 실시간 분석 코드가 일치하지 않을 수 있습니다." in result["quality_warnings"]
 
 
@@ -213,7 +215,8 @@ def test_collect_snapshot_with_commit_sha_in_snapshot():
     }
     result = collect_snapshot(state)
     assert result["commit_sha"] == "7890abcdef"
-    assert result["ingest_api_url"] == "https://gitingest.com/api/acme/harness/commit/7890abcdef"
+    base_url = get_settings().repo_ingest_base_url.rstrip("/")
+    assert result["ingest_api_url"] == f"{base_url}/api/acme/harness/commit/7890abcdef"
     assert "스냅샷 생성 시점의 commit_sha와 실시간 분석 코드가 일치하지 않을 수 있습니다." in result["quality_warnings"]
 
 
@@ -228,7 +231,8 @@ def test_collect_snapshot_with_commit_sha_in_metadata():
     }
     result = collect_snapshot(state)
     assert result["commit_sha"] == "1234567890"
-    assert result["ingest_api_url"] == "https://gitingest.com/api/acme/harness/commit/1234567890"
+    base_url = get_settings().repo_ingest_base_url.rstrip("/")
+    assert result["ingest_api_url"] == f"{base_url}/api/acme/harness/commit/1234567890"
     assert "스냅샷 생성 시점의 commit_sha와 실시간 분석 코드가 일치하지 않을 수 있습니다." in result["quality_warnings"]
 
 
@@ -243,7 +247,8 @@ def test_collect_snapshot_github_url_fallback():
     }
     result = collect_snapshot(state)
     assert result["commit_sha"] == "abcdef123456"
-    assert result["ingest_api_url"] == "https://gitingest.com/api/example-owner/example-repo/commit/abcdef123456"
+    base_url = get_settings().repo_ingest_base_url.rstrip("/")
+    assert result["ingest_api_url"] == f"{base_url}/api/example-owner/example-repo/commit/abcdef123456"
     assert "스냅샷 생성 시점의 commit_sha와 실시간 분석 코드가 일치하지 않을 수 있습니다." in result["quality_warnings"]
 
 

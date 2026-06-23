@@ -22,12 +22,28 @@ def _path_text(state: AnalysisState) -> list[str]:
 
 
 def _selected_source_text(state: AnalysisState) -> list[tuple[str, str]]:
+    from pathlib import Path
+    local_repo_dir_str = state.get("local_repo_dir")
+    local_repo_dir = Path(local_repo_dir_str) if local_repo_dir_str else None
+
     selected: list[tuple[str, str]] = []
     for item in state.get("selected_files", []):
         if not isinstance(item, dict):
             continue
         path = str(item.get("path") or "")
         content = str(item.get("content") or item.get("text") or "")
+        if not content and local_repo_dir and path:
+            try:
+                resolved_base = local_repo_dir.resolve()
+                resolved_target = (local_repo_dir / path).resolve()
+                if not resolved_target.is_relative_to(resolved_base):
+                    raise ValueError(f"Path traversal detected: {path}")
+                file_path = local_repo_dir / path
+                if file_path.exists():
+                    content = file_path.read_text(encoding="utf-8", errors="ignore")
+            except Exception as exc:
+                if "Path traversal detected" in str(exc):
+                    raise
         if path or content:
             selected.append((path, content))
     return selected

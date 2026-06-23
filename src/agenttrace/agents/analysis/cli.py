@@ -18,18 +18,25 @@ def main() -> None:
     snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
 
     graph = build_graph()
-    result = graph.invoke({
-        "run_id": str(uuid4()),
-        "trigger": "NEW_REPO",
-        "repository_snapshot": snapshot,
-        "output_path": args.out,
-        "claims": [],
-        "evidence_signals": [],
-        "risk_signals": [],
-        "quality_warnings": [],
-        "quality_errors": [],
-        "retry_count": 0,
-    })
+    run_id = str(uuid4())
+    local_repo_dir = Path("tmp/agenttrace") / run_id
+    try:
+        result = graph.invoke({
+            "run_id": run_id,
+            "trigger": "NEW_REPO",
+            "repository_snapshot": snapshot,
+            "output_path": args.out,
+            "claims": [],
+            "evidence_signals": [],
+            "risk_signals": [],
+            "quality_warnings": [],
+            "quality_errors": [],
+            "retry_count": 0,
+        })
+    finally:
+        import shutil
+        if local_repo_dir.exists():
+            shutil.rmtree(local_repo_dir, ignore_errors=True)
 
     print(json.dumps(result.get("persisted_analysis", result), ensure_ascii=False, indent=2))
 

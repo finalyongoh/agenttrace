@@ -44,6 +44,9 @@ class SourceFile(BaseModel):
             raise ValueError("content_hash must use sha256:<64 hex chars> format")
 
         self.content_hash = self.content_hash.lower()
+        if self.content == "":
+            return self
+
         if self.content_hash != expected_hash:
             raise ValueError("content_hash does not match content")
 

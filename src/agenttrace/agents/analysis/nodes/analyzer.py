@@ -5,7 +5,7 @@ import logging
 from pydantic import BaseModel, Field
 from agenttrace.agents.analysis.criteria.agent_type_keywords import AGENT_TYPE_KEYWORDS
 from agenttrace.agents.analysis.state import AnalysisState
-from agenttrace.models import build_openai_summary_model
+from agenttrace.models import build_openai_analysis_model
 from langchain_core.prompts import ChatPromptTemplate
 from agenttrace.config import get_settings
 
@@ -63,7 +63,13 @@ def _detect_agent_type(readme: str, file_tree: list[dict]) -> tuple[str, float, 
 
 
 def _strip_markdown(text: str) -> str:
+    # Remove markdown images first (e.g. ![Alt](url))
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)
+    # Replace markdown links with their text
     text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+    # Remove HTML tags (e.g. badges in HTML format)
+    text = re.sub(r"<[^>]+>", "", text)
+    # Remove markdown formatting characters
     text = re.sub(r'[`*_#>]', "", text)
     return re.sub(r"\s+", " ", text).strip(" -\t")
 
@@ -80,7 +86,10 @@ def _extract_claims(readme: str, agent_type: str) -> list[dict]:
         "workflow", "workflows", "coding agents", "methodology", "verify",
         "지원", "제공", "구현", "도구", "서버", "클라이언트", "평가", "벤치마크",
     ]
-    skipped_headings = {"superpowers", "quickstart", "installation", "documentation"}
+    skipped_headings = {
+        "superpowers", "quickstart", "installation", "documentation", "license",
+        "badge", "badges", "install", "mit licensed", "website", "smithery", "npm"
+    }
 
     sentences = re.split(r"(?<=[.!?。])\s+|\n+", readme.strip())
     claims: list[dict] = []
@@ -88,9 +97,24 @@ def _extract_claims(readme: str, agent_type: str) -> list[dict]:
     for sentence in sentences:
         clean = _strip_markdown(sentence)
         lower = clean.lower()
-        heading_prefix = lower.split(":", 1)[0].strip()
-        if len(clean) < 24 or lower in skipped_headings or heading_prefix in skipped_headings:
+        
+        # Skip if too short
+        if len(clean) < 30:
             continue
+            
+        # Skip if it is just a URL or contains raw links
+        if lower.startswith(("http://", "https://")) or "http://" in lower or "https://" in lower:
+            if re.search(r"https?://\S+", clean):
+                continue
+
+        heading_prefix = lower.split(":", 1)[0].strip()
+        if any(h in lower for h in skipped_headings) or heading_prefix in skipped_headings:
+            continue
+
+        # Skip typical badge keywords or license lines
+        if any(x in lower for x in ["badge", "npm install", "yarn add", "pip install", "mit license", "github action"]):
+            continue
+
         if any(marker in lower for marker in claim_markers):
             claims.append({
                 "id": f"claim-{len(claims) + 1}",
@@ -137,11 +161,22 @@ def analyzer(state: AnalysisState) -> AnalysisState:
     settings = get_settings()
     if settings.openai_api_key:
         try:
-            model = build_openai_summary_model()
+            model = build_openai_analysis_model()
             structured_model = model.with_structured_output(ClaimsExtractionResult)
             
             prompt = ChatPromptTemplate.from_messages([
-                ("system", "You are an expert AI software analyst. Your task is to analyze the README of a repository and extract key functional capabilities, features, or design claims made by the project.\nFocus only on key developer-facing or user-facing features, client/server interfaces, framework plugins, automation workflows, or testing capabilities.\nDo not extract trivial meta-information, badges, or simple installation commands.\nProvide a confidence score for each claim indicating how concrete or significant the claim is."),
+                ("system", (
+                    "You are an expert AI software analyst. Your task is to analyze the README of a repository "
+                    "and extract key functional capabilities, features, or design claims made by the project.\n"
+                    "CRITICAL RULES:\n"
+                    "1. Focus ONLY on concrete developer-facing or user-facing features, client/server interfaces, "
+                    "framework plugins, automation workflows, or testing capabilities.\n"
+                    "2. DO NOT extract simple markdown links, images, badges, installation buttons, "
+                    "npm/yarn/pip install commands, website landing URLs, license information, or repository titles/headings.\n"
+                    "3. Each extracted claim must be a complete sentence describing a real capability. "
+                    "Do not include raw markdown links or image tags (like ![alt](url) or [text](url)) in the claim_text.\n"
+                    "4. If there are no concrete claims to extract, return an empty list."
+                )),
                 ("human", "Repository Name: {full_name}\nAgent Type: {agent_type}\n\nREADME Content:\n{readme}")
             ])
             

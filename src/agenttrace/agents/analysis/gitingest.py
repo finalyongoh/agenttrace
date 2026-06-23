@@ -39,7 +39,13 @@ def fetch_gitingest_text(url: str) -> str:
         api_path = "/api/" + "/".join(path_parts)
         url = parsed._replace(path=api_path).geturl()
 
-    response = httpx.get(url, timeout=30.0)
+    from agenttrace.config import get_settings
+    settings = get_settings()
+    headers = {}
+    if settings.repo_ingest_host_header:
+        headers["Host"] = settings.repo_ingest_host_header
+
+    response = httpx.get(url, headers=headers, timeout=30.0)
     response.raise_for_status()
     try:
         data = response.json()

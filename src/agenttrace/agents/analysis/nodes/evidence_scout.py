@@ -32,20 +32,42 @@ def evidence_scout(state: AnalysisState) -> AnalysisState:
         return _legacy_evidence_scout(state)
 
     chunk_index = state.get("chunk_index", {})
-    entries = chunk_index.get("entries", [])
-    target_paths = [path.lower() for path in task.get("target_paths", [])]
+    target_paths = {path.lower() for path in task.get("target_paths", [])}
     query_tokens = set()
     for text in _claim_texts(state, task):
         query_tokens.update(_tokens(text))
 
     chunks_by_id = chunk_index.get("chunks_by_id", {})
-    selected_chunks = list(chunks_by_id.values())
+    
+    # Filter chunks that belong to the target paths
+    selected_chunks = []
+    selected_ids = []
+    for cid, chunk in chunks_by_id.items():
+        if chunk.get("file_path", "").lower() in target_paths:
+            selected_chunks.append(chunk)
+            selected_ids.append(cid)
+            
+    # Fallback 1: if no chunks matched the target paths, select chunks that match query tokens
+    if not selected_chunks:
+        for cid, chunk in chunks_by_id.items():
+            # Build simple text representation of chunk (e.g. file path + keywords or content)
+            chunk_tokens = _tokens(f"{chunk.get('file_path', '')} {chunk.get('content_hash', '')}")
+            if query_tokens & chunk_tokens:
+                selected_chunks.append(chunk)
+                selected_ids.append(cid)
+
+    # Fallback 2: if still empty, select first 20 chunks to prevent empty analysis
+    if not selected_chunks:
+        first_keys = list(chunks_by_id.keys())[:20]
+        selected_chunks = [chunks_by_id[k] for k in first_keys]
+        selected_ids = first_keys
+
     attempt = {
         "attempt": 1,
         "queries": sorted(query_tokens)[:20],
         "candidate_chunk_ids": list(chunks_by_id.keys()),
-        "selected_chunk_ids": list(chunks_by_id.keys()),
-        "excluded_chunk_ids": [],
+        "selected_chunk_ids": selected_ids,
+        "excluded_chunk_ids": [cid for cid in chunks_by_id if cid not in selected_ids],
         "exclusion_reasons": {},
     }
 

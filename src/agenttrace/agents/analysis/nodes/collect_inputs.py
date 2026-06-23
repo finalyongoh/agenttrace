@@ -1,10 +1,18 @@
-from __future__ import annotations
-
+from pathlib import Path
 from uuid import UUID
 
 from agenttrace.agents.analysis.input_providers import AnalysisInputAssembler
 from agenttrace.agents.analysis.schemas.input import AnalysisInputRequest
 from agenttrace.agents.analysis.state import AnalysisState
+
+
+def is_safe_path(base_dir: Path, target_path: str | Path) -> bool:
+    try:
+        resolved_base = base_dir.resolve()
+        resolved_target = (base_dir / target_path).resolve()
+        return resolved_target.is_relative_to(resolved_base)
+    except Exception:
+        return False
 
 
 def collect_inputs(state: AnalysisState) -> AnalysisState:
@@ -47,16 +55,36 @@ def collect_inputs(state: AnalysisState) -> AnalysisState:
     request = AnalysisInputRequest.model_validate(request_payload)
     assembled = AnalysisInputAssembler().assemble(request)
 
+    run_id = state.get("run_id") or str(request.analysis_id)
+    local_repo_dir = Path("tmp/agenttrace") / run_id
+    local_repo_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save files to local disk
+    for source in assembled.source_files:
+        if not is_safe_path(local_repo_dir, source.path):
+            raise ValueError(f"Path traversal detected: {source.path}")
+        dest_file = local_repo_dir / source.path
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+        dest_file.write_text(source.content, encoding="utf-8")
+
+    # Strip content from state files to keep state light
+    state_source_files = []
+    for source in assembled.source_files:
+        s_dict = source.model_dump()
+        s_dict["content"] = ""
+        state_source_files.append(s_dict)
+
     return {
-        "run_id": state.get("run_id") or str(request.analysis_id),
+        "run_id": run_id,
+        "local_repo_dir": str(local_repo_dir),
         "full_name": request.repository.full_name,
         "github_url": request.repository.github_url or "",
         "metadata": request.repository.model_dump(),
         "repository_snapshot": request.snapshot.model_dump() if request.snapshot else {},
         "readme": request.readme_text or "",
         "file_tree": [{"path": path} for path in request.file_tree],
-        "source_files": [source.model_dump() for source in assembled.source_files],
-        "selected_files": [source.model_dump() for source in assembled.source_files],
+        "source_files": state_source_files,
+        "selected_files": state_source_files,
         "missing_inputs": assembled.missing_inputs,
         "input_manifest": assembled.input_manifest,
         "analysis_mode": assembled.analysis_mode,

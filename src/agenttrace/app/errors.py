@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 
 from agenttrace.shared.errors import (
+    MissingAnalysisModelError,
     MissingSummaryModelError,
     RepoIngestError,
     SummaryGenerationError,
@@ -10,6 +11,15 @@ from agenttrace.shared.errors import (
 
 
 def summary_service_exception_to_http(exc: Exception) -> HTTPException:
+    if isinstance(exc, MissingAnalysisModelError):
+        return HTTPException(
+            status_code=500,
+            detail={
+                "error": "analysis_model_not_configured",
+                "message": str(exc),
+            },
+        )
+
     if isinstance(exc, MissingSummaryModelError):
         return HTTPException(
             status_code=500,

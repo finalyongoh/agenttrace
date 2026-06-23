@@ -9,6 +9,10 @@ class MissingSummaryModelError(SummaryServiceError):
     """Raised when an LLM model is required but not configured."""
 
 
+class MissingAnalysisModelError(SummaryServiceError):
+    """Raised when an analysis model is required but not configured."""
+
+
 class SummaryGenerationError(SummaryServiceError):
     """Raised when the LLM summary chain fails."""
 

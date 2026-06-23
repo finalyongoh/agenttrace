@@ -32,7 +32,11 @@ class GitingestInputProvider:
     def load(self, request: AnalysisInputRequest) -> list[SourceFile]:
         if not request.repository.github_url:
             return []
-        url = build_gitingest_url(request.repository.github_url)
+        from agenttrace.config import get_settings
+        url = build_gitingest_url(
+            request.repository.github_url,
+            base_url=get_settings().repo_ingest_base_url,
+        )
         try:
             return parse_gitingest_output(self._fetch_text(url))
         except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as exc:

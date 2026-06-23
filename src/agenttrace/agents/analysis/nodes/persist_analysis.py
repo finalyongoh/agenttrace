@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from agenttrace.agents.analysis.state import AnalysisState
+from agenttrace.services.report_renderer import render_markdown_report
 
 
 def build_result_json(state: AnalysisState) -> dict:
@@ -11,10 +12,18 @@ def build_result_json(state: AnalysisState) -> dict:
 
 
 def persist_analysis(state: AnalysisState) -> AnalysisState:
+    final_result = state.get("final_result", {})
+    report_sections = final_result.get("report_sections", [])
+    report_markdown = render_markdown_report(report_sections) if report_sections else ""
     payload = {
         "analysis_id": state.get("run_id"),
         "status": "COMPLETED",
-        "analysis_result": state.get("final_result"),
+        "analysis_result": final_result,
+        "analysis_report": {
+            "lang": "ko",
+            "title": "AgentTrace 기술 분석 보고서",
+            "body_markdown": report_markdown,
+        },
         "harness_relevance": state.get("harness_relevance", {}),
         "harness_capabilities": state.get("harness_capabilities", {}),
         "negative_evidence": state.get("negative_evidence", []),

@@ -16,6 +16,7 @@ dependencies = [
   "fastapi>=0.128.8",
   "uvicorn[standard]>=0.39.0",
   "httpx>=0.28.1",
+  "psycopg[binary]>=3.1.18",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,8 @@ dev = [
 agenthub-analyze = "agenttrace.agents.analysis.cli:main"
 agenttrace-api = "agenttrace.app.__main__:main"
 agenttrace-summary = "agenttrace.agents.summary.cli:main"
+agenttrace-worker = "agenttrace.app.worker:main"
+
 
 [tool.setuptools.packages.find]
 where = ["src"]

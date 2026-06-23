@@ -1,10 +1,13 @@
 from agenttrace.agents.analysis.nodes.analysis_precheck import analysis_precheck
 from agenttrace.agents.analysis.nodes.analysis_planner import analysis_planner
 from agenttrace.agents.analysis.nodes.claim_analyzer import claim_analyzer
+from agenttrace.agents.analysis.nodes.content_indexer import content_indexer
+from agenttrace.agents.analysis.nodes.chunk_embedder import chunk_embedder
 from agenttrace.agents.analysis.nodes.content_preprocessor import content_preprocessor
 from agenttrace.agents.analysis.nodes.evidence_evaluator import evidence_evaluator
 from agenttrace.agents.analysis.nodes.evidence_scout import evidence_scout
 from agenttrace.agents.analysis.nodes.finalize_task import finalize_task
+from agenttrace.agents.analysis.nodes.persist_analysis import persist_analysis
 from agenttrace.agents.analysis.nodes.finalize_analysis import finalize_analysis
 from agenttrace.agents.analysis.nodes.quality_gate import quality_gate
 from agenttrace.agents.analysis.nodes.repository_synthesizer import repository_synthesizer
@@ -22,6 +25,103 @@ def test_content_preprocessor_builds_chunks_from_source_files():
 
     assert result["content_chunks"]
     assert result["chunk_index"]["entries"][0]["file_path"] == "src/server.py"
+
+
+def test_content_preprocessor_prepares_index_and_embedding_metadata():
+    state = {
+        "repository_snapshot": {"snapshot_id": "00000000-0000-0000-0000-000000000001"},
+        "source_files": [{"path": "src/server.py", "content": "def register_tool(): pass"}],
+        "missing_inputs": [],
+    }
+
+    result = content_preprocessor(state)
+
+    assert result["content_index_request"] == {
+        "snapshot_id": "00000000-0000-0000-0000-000000000001",
+        "chunking_version": "semantic-v1",
+        "embedding_model": "text-embedding-3-small",
+        "embedding_dimension": 1536,
+        "index_version": "pgvector-hnsw-v1",
+    }
+    assert result["embedding_candidates"][0]["chunk_id"] == result["content_chunks"][0]["chunk_id"]
+    assert result["embedding_candidates"][0]["content_hash"] == result["content_chunks"][0]["content_hash"]
+    assert "content" not in result["embedding_candidates"][0]
+
+
+class FakeContentIndexStore:
+    def __init__(self):
+        self.requests = []
+
+    def request_index(self, **kwargs):
+        self.requests.append(kwargs)
+        return {"index_id": "idx-1", "status": "PENDING"}
+
+
+def test_content_indexer_requests_index_from_preprocessor_metadata():
+    store = FakeContentIndexStore()
+    state = {
+        "content_index_request": {
+            "snapshot_id": "snap-1",
+            "chunking_version": "semantic-v1",
+            "embedding_model": "text-embedding-3-small",
+            "embedding_dimension": 1536,
+            "index_version": "pgvector-hnsw-v1",
+        }
+    }
+
+    result = content_indexer(state, store=store)
+
+    assert store.requests == [state["content_index_request"]]
+    assert result["content_index_result"] == {"index_id": "idx-1", "status": "PENDING"}
+
+
+class FakeEmbeddingService:
+    def __init__(self):
+        self.texts = []
+
+    def embed_texts(self, texts):
+        self.texts.extend(texts)
+        return [[0.1] * 1536 for _ in texts]
+
+
+class FakeEmbeddingStore:
+    def __init__(self):
+        self.rows = []
+
+    def update_embeddings(self, rows):
+        self.rows.extend(rows)
+        return [{"chunk_id": row["chunk_id"]} for row in rows]
+
+
+def test_chunk_embedder_reads_local_chunk_content_and_updates_store(tmp_path):
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    (repo_dir / "src").mkdir()
+    (repo_dir / "src/server.py").write_text("def register_tool(): pass", encoding="utf-8")
+    embedding_service = FakeEmbeddingService()
+    store = FakeEmbeddingStore()
+    state = {
+        "local_repo_dir": str(repo_dir),
+        "content_chunks": [
+            {
+                "chunk_id": "chunk-a",
+                "file_path": "src/server.py",
+                "content": "",
+                "start_byte": 0,
+                "end_byte": 25,
+                "line_start": 1,
+                "line_end": 1,
+                "is_partial": False,
+                "content_hash": "sha256:" + "0" * 64,
+            }
+        ],
+    }
+
+    result = chunk_embedder(state, embedding_service=embedding_service, store=store)
+
+    assert embedding_service.texts == ["def register_tool(): pass"]
+    assert store.rows[0]["chunk_id"] == "chunk-a"
+    assert result["chunk_embedding_result"]["updated_count"] == 1
 
 
 def test_analysis_precheck_allows_limited_readme_file_tree_analysis():
@@ -160,3 +260,84 @@ def test_finalize_analysis_builds_schema_valid_result():
 
     assert result["final_result"]["analysis_status"] == "insufficient_evidence"
     assert quality_gate({**state, **result})["quality_gate_result"]["critical_errors"] == []
+
+
+def test_finalize_analysis_builds_document_contract_result():
+    state = {
+        "synthesis": {
+            "analysis_status": "completed_with_limitations",
+            "agent_type": "Unknown",
+            "tech_stack_summary": {
+                "primary_language": "Python",
+                "frameworks": ["FastAPI"],
+                "dependencies": ["langgraph"],
+            },
+        },
+        "content_chunks": [
+            {
+                "chunk_id": "chunk-0001",
+                "file_path": "src/server.py",
+                "content": "def create_app():\n    return app\n",
+                "line_start": 1,
+                "line_end": 2,
+                "content_hash": "sha256:" + "1" * 64,
+            }
+        ],
+        "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": ["정적 분석 결과"]},
+    }
+
+    result = finalize_analysis(state)
+    final_result = result["final_result"]
+
+    assert final_result["analysis_status"] == "completed_with_limitations"
+    assert len(final_result["area_findings"]) == 8
+    assert len(final_result["report_sections"]) == 11
+    assert final_result["evidence_refs"][0]["chunk_id"] == "chunk-0001"
+    assert quality_gate({**state, **result})["quality_gate_result"]["critical_errors"] == []
+
+
+def test_quality_gate_rejects_document_contract_reference_break():
+    state = {
+        "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
+        "content_chunks": [
+            {
+                "chunk_id": "chunk-0001",
+                "file_path": "src/server.py",
+                "content": "def create_app(): pass",
+                "line_start": 1,
+                "line_end": 1,
+                "content_hash": "sha256:" + "1" * 64,
+            }
+        ],
+    }
+    result = finalize_analysis(state)
+    result["final_result"]["area_findings"][0]["findings"][0]["evidence_refs"] = ["missing-ref"]
+
+    gate = quality_gate({**state, **result})
+
+    assert gate["quality_gate_result"]["critical_errors"]
+    assert "AnalysisResult schema invalid" in gate["quality_errors"]
+
+
+def test_persist_analysis_renders_report_markdown_from_sections():
+    state = {
+        "run_id": "run-1",
+        "final_result": {
+            "report_sections": [
+                {
+                    "section_id": 1,
+                    "section_name": "핵심 요약",
+                    "status": "confirmed",
+                    "title": "1. 핵심 요약",
+                    "body_markdown": "본문",
+                    "mermaid_diagram": "flowchart TD\n  A --> B",
+                }
+            ]
+        },
+    }
+
+    result = persist_analysis(state)
+    payload = result["callback_payload"]
+
+    assert payload["analysis_report"]["body_markdown"].startswith("# 1. 핵심 요약")
+    assert "```mermaid" in payload["analysis_report"]["body_markdown"]

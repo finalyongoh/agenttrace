@@ -12,7 +12,10 @@ def request_builder(state: AnalysisState) -> AnalysisState:
     current_count = 0
 
     for chunk in state.get("selected_chunks", []):
-        content_len = len(chunk.get("content", ""))
+        content_len = chunk.get("end_byte", 0) - chunk.get("start_byte", 0)
+        if content_len <= 0:
+            content_len = len(chunk.get("content", "") or "")
+
         if current_chunks and current_count + content_len > MAX_TASK_PART_CHARS:
             parts.append({
                 "part_id": f"{task_id}-part-{len(parts) + 1:03d}",

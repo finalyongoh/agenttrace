@@ -15,7 +15,7 @@ def task_result_merge(state: AnalysisState) -> AnalysisState:
         claim_verdicts.extend(result.get("claim_verdicts", []))
 
     status = "RESOLVED" if any(
-        verdict.get("verdict") in {"SUPPORTED", "PARTIALLY_SUPPORTED", "CONTRADICTED", "NOT_FOUND"}
+        verdict.get("verdict") in {"SUPPORTED", "PARTIALLY_SUPPORTED", "CONTRADICTED", "NOT_FOUND", "DOCUMENTED"}
         for verdict in claim_verdicts
     ) else "INSUFFICIENT_EVIDENCE"
     task_result = EvidenceTaskResult(
