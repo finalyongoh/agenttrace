@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from agenttrace.agents.analysis.state import AnalysisState
+from agenttrace.logging_config import get_logger
 
+logger = get_logger(__name__)
 
 AGENT_TYPE_MAP = {
     "MCP_SERVER": "MCP",
@@ -16,7 +18,11 @@ AGENT_TYPE_MAP = {
 
 
 def repository_synthesizer(state: AnalysisState) -> AnalysisState:
+    run_id = state.get("run_id", "-")
+    log = logger.bind(node="repository_synthesizer", run_id=run_id)
+    log.info("시작")
     tasks = state.get("analysis_plan", {}).get("tasks", [])
+
     results_by_id = {
         result.get("task_id"): result
         for result in state.get("task_results", [])
@@ -109,6 +115,7 @@ def repository_synthesizer(state: AnalysisState) -> AnalysisState:
         "en": "Refer to the README and detected Evidence Signals to manually verify sandbox security boundaries and OCI compatibility within the source code."
     }
 
+    log.info("\uc644\ub8cc", status=analysis_status, agent_type=agent_type)
     return {
         "synthesis": {
             "analysis_status": analysis_status,

@@ -4,9 +4,15 @@ from pydantic import ValidationError
 
 from agenttrace.agents.analysis.schemas.result import AnalysisResult
 from agenttrace.agents.analysis.state import AnalysisState
+from agenttrace.logging_config import get_logger
 
+logger = get_logger(__name__)
 
 def quality_gate(state: AnalysisState) -> AnalysisState:
+    run_id = state.get("run_id", "-")
+    log = logger.bind(node="quality_gate", run_id=run_id)
+    log.info("시작")
+
     if "final_result" not in state:
         return _legacy_quality_gate(state)
 
@@ -62,6 +68,7 @@ def quality_gate(state: AnalysisState) -> AnalysisState:
     if result.analysis_status in {"completed_with_limitations", "insufficient_evidence", "uncertain_classification"}:
         warnings.extend(result.analysis_limitations.notes)
 
+    log.info("\uc644\ub8cc", errors=len(critical_errors), warnings=len(warnings))
     return {
         "quality_gate_result": {
             "warnings": warnings,

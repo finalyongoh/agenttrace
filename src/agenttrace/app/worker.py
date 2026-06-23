@@ -10,8 +10,10 @@ from agenttrace.services.database import PsycopgSqlConnection, init_database
 from agenttrace.services.analysis_jobs import PostgresAnalysisJobStore, DurableAnalysisWorker
 from agenttrace.agents.analysis.graph import build_graph
 from agenttrace.api.analysis import AnalysisRequest, _compat_result_json
+from agenttrace.logging_config import setup_logging, get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
 
 async def run_analysis_pipeline(job: dict[str, Any]) -> dict[str, Any]:
     run_id = str(job["job_id"])
@@ -178,8 +180,9 @@ def worker_runner(job: dict[str, Any]) -> dict[str, Any]:
     return asyncio.run(run_analysis_pipeline(job))
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    setup_logging()
     logger.info("Starting AgentTrace Durable Analysis Worker...")
+
     
     settings = get_settings()
     init_database(settings.database_url)

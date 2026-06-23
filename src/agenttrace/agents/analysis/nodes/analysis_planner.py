@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from agenttrace.agents.analysis.state import AnalysisState
+from agenttrace.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 
 REQUIRED_KEYWORDS = {
@@ -32,7 +36,11 @@ def _target_paths(claims: list[dict], file_tree: list[dict]) -> list[str]:
 
 
 def analysis_planner(state: AnalysisState) -> AnalysisState:
+    run_id = state.get("run_id", "-")
+    log = logger.bind(node="analysis_planner", run_id=run_id)
+    log.info("시작")
     claims = list(state.get("claims", []))
+
     file_tree = list(state.get("file_tree", []))
     repository_id = state.get("metadata", {}).get("repository_id") or state.get("repository_id")
 
@@ -67,4 +75,6 @@ def analysis_planner(state: AnalysisState) -> AnalysisState:
         "repository_id": repository_id,
         "tasks": tasks,
     }
+    log.info("완료", tasks=len(tasks))
     return {"analysis_plan": plan, "evidence_tasks": tasks}
+

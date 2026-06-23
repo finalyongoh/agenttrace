@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from agenttrace.agents.analysis.schemas.result import AnalysisResult, COMMON_ANALYSIS_AREAS
 from agenttrace.agents.analysis.state import AnalysisState
+from agenttrace.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 
 REPORT_SECTION_NAMES = (
@@ -20,7 +24,11 @@ REPORT_SECTION_NAMES = (
 
 
 def finalize_analysis(state: AnalysisState) -> AnalysisState:
+    run_id = state.get("run_id", "-")
+    log = logger.bind(node="finalize_analysis", run_id=run_id)
+    log.info("시작")
     synthesis = state.get("synthesis", {})
+
     evidence_refs = state.get("evidence_refs") or _build_evidence_refs(state)
     area_findings = state.get("area_findings") or _build_area_findings(evidence_refs)
     report_sections = state.get("report_sections") or _build_report_sections(area_findings)
@@ -76,7 +84,15 @@ def finalize_analysis(state: AnalysisState) -> AnalysisState:
         if local_repo_dir.exists():
             shutil.rmtree(local_repo_dir, ignore_errors=True)
 
+    log.info(
+        "\uc644\ub8cc",
+        sections=len(result.report_sections),
+        area_findings=len(result.area_findings),
+        evidence_refs=len(result.evidence_refs),
+        status=result.analysis_status,
+    )
     return {"final_result": result.model_dump()}
+
 
 
 def _build_evidence_refs(state: AnalysisState) -> list[dict]:

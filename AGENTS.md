@@ -178,3 +178,59 @@ rtk .venv/bin/pytest --cov=src/agenttrace --cov-report=term-missing
 > 테스트는 실제 DB/LLM 호출 없이 mock 기반으로 동작.
 > `tests/fixtures/` 아래 샘플 데이터 사용.
 
+## Logging
+
+### 설정
+
+- 초기화는 `setup_logging()` (`src/agenttrace/logging_config.py`) **한 곳에서만** 호출.
+- API 서버: `lifespan()` 진입 시 호출.
+- Worker: `main()` 진입 시 호출.
+
+### 노드 로깅 패턴 (필수)
+
+새 파이프라인 노드 작성 시 아래 패턴을 반드시 따른다:
+
+```python
+from agenttrace.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+def my_node(state: AnalysisState) -> AnalysisState:
+    run_id = state.get("run_id", "-")
+    log = logger.bind(node="my_node", run_id=run_id)
+    log.info("시작")
+    # ... 노드 로직 ...
+    log.info("완료", key=value, ...)   # 핵심 결과 키-값으로 포함
+    return result
+```
+
+- LLM 실패·fallback → `log.warning()`
+- 예외 → `log.error()`
+
+### 출력 포맷 (JSON)
+
+```json
+{"node":"collect_inputs","run_id":"abc-123","event":"완료","source_files":42,"mode":"normal","level":"info","timestamp":"2026-06-23T04:00:00Z"}
+```
+
+### 로그로 파이프라인 흐름 추적
+
+```bash
+# 특정 run_id 전체 흐름
+docker compose logs api | grep '"run_id":"<UUID>"'
+
+# 오류만 필터
+docker compose logs api | grep '"level":"error"'
+
+# 노드별 완료 타임라인
+docker compose logs api | grep '"event":"완료"' | jq '{node,run_id,duration_ms}'
+```
+
+### 외부 라이브러리 로그 수준
+
+`httpx`, `openai`, `langchain`, `langgraph`, `uvicorn.access` → WARNING 이상만 출력 (logging_config.py에서 고정).
+
+### 주의
+
+- 로그에 API 키, 소스코드 전체 내용, 개인정보 포함 금지.
+- `logger.bind()` 결과를 함수 내 `log` 변수로 받아서 사용 (전역 logger는 컨텍스트 없음).

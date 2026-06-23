@@ -17,6 +17,7 @@ dependencies = [
   "uvicorn[standard]>=0.39.0",
   "httpx>=0.28.1",
   "psycopg[binary]>=3.1.18",
+  "structlog>=26.1.0",
 ]
 
 [project.optional-dependencies]
