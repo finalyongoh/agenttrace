@@ -7,6 +7,7 @@ from langgraph.graph import END, START, StateGraph
 from agenttrace.agents.analysis.nodes.analysis_planner import analysis_planner
 from agenttrace.agents.analysis.nodes.analysis_precheck import analysis_precheck
 from agenttrace.agents.analysis.nodes.build_file_catalog import build_file_catalog
+from agenttrace.agents.analysis.nodes.build_repo_map import build_repo_map_node
 from agenttrace.agents.analysis.nodes.claim_analyzer import claim_analyzer
 from agenttrace.agents.analysis.nodes.chunk_embedder import chunk_embedder
 from agenttrace.agents.analysis.nodes.collect_inputs import collect_inputs
@@ -51,6 +52,7 @@ def build_graph(*, content_index_store=None, embedding_service=None, embedding_s
 
     builder.add_node("collect_inputs", collect_inputs)
     builder.add_node("build_file_catalog", build_file_catalog)
+    builder.add_node("build_repo_map", build_repo_map_node)
     builder.add_node("content_preprocessor", content_preprocessor)
     builder.add_node(
         "content_indexer",
@@ -83,7 +85,8 @@ def build_graph(*, content_index_store=None, embedding_service=None, embedding_s
 
     builder.add_edge(START, "collect_inputs")
     builder.add_edge("collect_inputs", "build_file_catalog")
-    builder.add_edge("build_file_catalog", "content_preprocessor")
+    builder.add_edge("build_file_catalog", "build_repo_map")
+    builder.add_edge("build_repo_map", "content_preprocessor")
     builder.add_edge("content_preprocessor", "content_indexer")
     builder.add_edge("content_indexer", "chunk_embedder")
     builder.add_edge("chunk_embedder", "analysis_precheck")
