@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 from uuid import UUID
 
 from agenttrace.agents.analysis.input_providers import AnalysisInputAssembler
@@ -20,6 +21,7 @@ def is_safe_path(base_dir: Path, target_path: str | Path) -> bool:
 
 
 def collect_inputs(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
     run_id = state.get("run_id", "-")
     log = logger.bind(node="collect_inputs", run_id=run_id)
     log.info("시작")
@@ -88,6 +90,7 @@ def collect_inputs(state: AnalysisState) -> AnalysisState:
         mode=assembled.analysis_mode,
         provider=assembled.input_manifest.get("source_provider", "none"),
         missing=assembled.missing_inputs,
+        duration_ms=int((time.perf_counter() - _t) * 1000),
     )
     return {
 

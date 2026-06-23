@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import re
+import time
 
 from agenttrace.agents.analysis.state import AnalysisState
+from agenttrace.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 
 def _current_task(state: AnalysisState) -> dict | None:
@@ -27,9 +32,15 @@ def _tokens(text: str) -> set[str]:
 
 
 def evidence_scout(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
+    run_id = state.get("run_id", "-")
+    task_id = state.get("current_task_id", "-")
+    log = logger.bind(node="evidence_scout", run_id=run_id, task_id=task_id)
+    log.info("시작")
     task = _current_task(state)
+
     if not task:
-        return _legacy_evidence_scout(state)
+        return _legacy_evidence_scout(state, log, _t)
 
     chunk_index = state.get("chunk_index", {})
     target_paths = {path.lower() for path in task.get("target_paths", [])}
@@ -71,13 +82,14 @@ def evidence_scout(state: AnalysisState) -> AnalysisState:
         "exclusion_reasons": {},
     }
 
+    log.info("완료", selected_chunks=len(selected_chunks), duration_ms=int((time.perf_counter() - _t) * 1000))
     return {
         "selected_chunks": selected_chunks,
         "search_attempt": attempt,
     }
 
 
-def _legacy_evidence_scout(state: AnalysisState) -> AnalysisState:
+def _legacy_evidence_scout(state: AnalysisState, log, _t) -> AnalysisState:
     claims = state.get("claims", [])
     file_tree = state.get("file_tree", [])
     agent_type = state.get("agent_type", "")
@@ -121,9 +133,11 @@ def _legacy_evidence_scout(state: AnalysisState) -> AnalysisState:
                 })
                 break
     if not signals:
+        log.warning("근거 부족", duration_ms=int((time.perf_counter()-_t)*1000))
         return {
             "status": "INSUFFICIENT_EVIDENCE",
             "evidence_signals": [],
             "quality_warnings": ["README claim을 뒷받침할 파일 경로 근거가 부족합니다."],
         }
+    log.info("완료", signals=len(signals), duration_ms=int((time.perf_counter()-_t)*1000))
     return {"status": "COLLECTED", "evidence_signals": signals}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from agenttrace.agents.analysis.state import AnalysisState
@@ -16,6 +17,7 @@ def build_result_json(state: AnalysisState) -> dict:
 
 
 def persist_analysis(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
     run_id = state.get("run_id", "-")
     log = logger.bind(node="persist_analysis", run_id=run_id)
     log.info("시작")
@@ -56,7 +58,7 @@ def persist_analysis(state: AnalysisState) -> AnalysisState:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    log.info("\uc644\ub8cc")
+    log.info("완료", duration_ms=int((time.perf_counter() - _t) * 1000))
     return {
         "callback_payload": payload,
         "persisted_analysis": payload,

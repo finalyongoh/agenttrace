@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from agenttrace.agents.analysis.state import AnalysisState
 from agenttrace.logging_config import get_logger
 
@@ -18,6 +20,7 @@ AGENT_TYPE_MAP = {
 
 
 def repository_synthesizer(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
     run_id = state.get("run_id", "-")
     log = logger.bind(node="repository_synthesizer", run_id=run_id)
     log.info("시작")
@@ -115,7 +118,7 @@ def repository_synthesizer(state: AnalysisState) -> AnalysisState:
         "en": "Refer to the README and detected Evidence Signals to manually verify sandbox security boundaries and OCI compatibility within the source code."
     }
 
-    log.info("\uc644\ub8cc", status=analysis_status, agent_type=agent_type)
+    log.info("완료", status=analysis_status, agent_type=agent_type, duration_ms=int((time.perf_counter() - _t) * 1000))
     return {
         "synthesis": {
             "analysis_status": analysis_status,

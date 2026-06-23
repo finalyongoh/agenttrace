@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from pydantic import ValidationError
 
 from agenttrace.agents.analysis.schemas.result import AnalysisResult
@@ -9,12 +11,13 @@ from agenttrace.logging_config import get_logger
 logger = get_logger(__name__)
 
 def quality_gate(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
     run_id = state.get("run_id", "-")
     log = logger.bind(node="quality_gate", run_id=run_id)
     log.info("시작")
 
     if "final_result" not in state:
-        return _legacy_quality_gate(state)
+        return _legacy_quality_gate(state, log, _t)
 
     critical_errors: list[str] = []
     warnings: list[str] = []
@@ -68,7 +71,7 @@ def quality_gate(state: AnalysisState) -> AnalysisState:
     if result.analysis_status in {"completed_with_limitations", "insufficient_evidence", "uncertain_classification"}:
         warnings.extend(result.analysis_limitations.notes)
 
-    log.info("\uc644\ub8cc", errors=len(critical_errors), warnings=len(warnings))
+    log.info("완료", errors=len(critical_errors), warnings=len(warnings), duration_ms=int((time.perf_counter() - _t) * 1000))
     return {
         "quality_gate_result": {
             "warnings": warnings,
@@ -80,7 +83,7 @@ def quality_gate(state: AnalysisState) -> AnalysisState:
     }
 
 
-def _legacy_quality_gate(state: AnalysisState) -> AnalysisState:
+def _legacy_quality_gate(state: AnalysisState, log, _t) -> AnalysisState:
     errors: list[str] = []
     warnings: list[str] = []
     evidence = state.get("evidence_signals", [])
@@ -102,8 +105,12 @@ def _legacy_quality_gate(state: AnalysisState) -> AnalysisState:
     if state.get("status") != "OUT_OF_SCOPE" and not state.get("followup_actions"):
         errors.append("OUT_OF_SCOPE이 아닌 분석에는 followup_actions가 필요합니다.")
 
+    duration_ms = int((time.perf_counter() - _t) * 1000)
     if errors:
+        log.warning("검증 실패 (legacy)", errors=len(errors), warnings=len(warnings), duration_ms=duration_ms)
         return {"status": "NEEDS_HUMAN_REVIEW", "quality_errors": errors, "quality_warnings": warnings}
     if warnings:
+        log.info("완료 (legacy)", status="UNCERTAIN", warnings=len(warnings), duration_ms=duration_ms)
         return {"status": "UNCERTAIN", "quality_warnings": warnings}
+    log.info("완료 (legacy)", status="COMPLETED", duration_ms=duration_ms)
     return {"status": "COMPLETED", "quality_warnings": warnings}

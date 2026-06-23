@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from agenttrace.agents.analysis.state import AnalysisState
 from agenttrace.logging_config import get_logger
 
@@ -36,6 +38,7 @@ def _target_paths(claims: list[dict], file_tree: list[dict]) -> list[str]:
 
 
 def analysis_planner(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
     run_id = state.get("run_id", "-")
     log = logger.bind(node="analysis_planner", run_id=run_id)
     log.info("시작")
@@ -75,6 +78,6 @@ def analysis_planner(state: AnalysisState) -> AnalysisState:
         "repository_id": repository_id,
         "tasks": tasks,
     }
-    log.info("완료", tasks=len(tasks))
+    log.info("완료", tasks=len(tasks), duration_ms=int((time.perf_counter() - _t) * 1000))
     return {"analysis_plan": plan, "evidence_tasks": tasks}
 

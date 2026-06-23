@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 import json
-import logging
+import time
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -10,8 +10,9 @@ from agenttrace.agents.analysis.state import AnalysisState
 from agenttrace.models import build_openai_analysis_model
 from agenttrace.config import get_settings
 from langchain_core.prompts import ChatPromptTemplate
+from agenttrace.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _get_chunk_content(chunk: dict, local_repo_dir: Path | None, file_bytes_cache: dict[Path, bytes] | None = None) -> str:
@@ -167,8 +168,14 @@ def _fallback_evaluate(
 
 
 def evidence_evaluator(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
+    run_id = state.get("run_id", "-")
+    task_id = state.get("current_task_id", "-")
+    log = logger.bind(node="evidence_evaluator", run_id=run_id, task_id=task_id)
+    log.info("시작")
     task = _current_task(state)
     if not task:
+        log.info("완료", results=0, duration_ms=int((time.perf_counter() - _t) * 1000))
         return {"task_part_results": []}
 
     all_chunks = state.get("selected_chunks", [])
@@ -302,7 +309,7 @@ def evidence_evaluator(state: AnalysisState) -> AnalysisState:
                     
                 llm_success = True
             except Exception as exc:
-                logger.warning(f"LLM claims evaluation failed for part {part['part_id']}, falling back to keyword logic: {exc}")
+                log.warning("LLM 검증 실패 (fallback)", part_id=part['part_id'], error=str(exc))
                 evidence_signals = []
                 verdicts = []
                 
@@ -326,6 +333,9 @@ def evidence_evaluator(state: AnalysisState) -> AnalysisState:
             "claim_verdicts": verdicts,
         })
 
+    total_signals = sum(len(r.get("evidence_signals", [])) for r in task_part_results)
+    total_verdicts = sum(len(r.get("claim_verdicts", [])) for r in task_part_results)
+    log.info("완료", task_parts=len(task_parts), signals=total_signals, verdicts=total_verdicts, duration_ms=int((time.perf_counter() - _t) * 1000))
     return {
         "task_part_results": task_part_results
     }

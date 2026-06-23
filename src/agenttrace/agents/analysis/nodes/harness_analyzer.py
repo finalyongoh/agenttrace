@@ -1,4 +1,4 @@
-from __future__ import annotations
+import time
 
 from agenttrace.agents.analysis.criteria.harness_capabilities import (
     CORE_HIGH_RELEVANCE_CAPABILITIES,
@@ -6,6 +6,9 @@ from agenttrace.agents.analysis.criteria.harness_capabilities import (
     HARNESS_CAPABILITY_NAMES,
 )
 from agenttrace.agents.analysis.state import AnalysisState
+from agenttrace.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 def _path_text(state: AnalysisState) -> list[str]:
@@ -126,6 +129,10 @@ def _level_for(
 
 
 def harness_analyzer(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
+    run_id = state.get("run_id", "-")
+    log = logger.bind(node="harness_analyzer", run_id=run_id)
+    log.info("시작")
     paths = _path_text(state)
     sources = _selected_source_text(state)
     readme = state.get("readme", "")
@@ -240,6 +247,7 @@ def harness_analyzer(state: AnalysisState) -> AnalysisState:
         "negative_evidence": negative_evidence,
     }
 
+    log.info("완료", level=level, confidence=confidence, evidence_count=len(evidence), duration_ms=int((time.perf_counter() - _t) * 1000))
     return {
         "harness_relevance": harness_relevance,
         "harness_capabilities": capabilities,

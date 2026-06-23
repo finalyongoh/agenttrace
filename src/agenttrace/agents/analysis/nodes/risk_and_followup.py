@@ -1,9 +1,11 @@
-from __future__ import annotations
-
+import time
 from pathlib import PurePosixPath
 
 from agenttrace.agents.analysis.criteria.agent_type_keywords import RISKY_README_WORDS
 from agenttrace.agents.analysis.state import AnalysisState
+from agenttrace.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 CONFIG_FILENAMES = {
@@ -161,4 +163,15 @@ def risk_and_followup_planner(state: AnalysisState) -> AnalysisState:
 
 
 def risk_and_followup(state: AnalysisState) -> AnalysisState:
-    return risk_and_followup_planner(state)
+    _t = time.perf_counter()
+    run_id = state.get("run_id", "-")
+    log = logger.bind(node="risk_and_followup", run_id=run_id)
+    log.info("시작")
+    res = risk_and_followup_planner(state)
+    log.info(
+        "완료",
+        risks=len(res.get("risk_signals", [])),
+        followup_actions=len(res.get("followup_actions", [])),
+        duration_ms=int((time.perf_counter() - _t) * 1000),
+    )
+    return res

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from agenttrace.agents.analysis.schemas.result import AnalysisResult, COMMON_ANALYSIS_AREAS
 from agenttrace.agents.analysis.state import AnalysisState
 from agenttrace.logging_config import get_logger
@@ -24,6 +26,7 @@ REPORT_SECTION_NAMES = (
 
 
 def finalize_analysis(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
     run_id = state.get("run_id", "-")
     log = logger.bind(node="finalize_analysis", run_id=run_id)
     log.info("시작")
@@ -85,11 +88,12 @@ def finalize_analysis(state: AnalysisState) -> AnalysisState:
             shutil.rmtree(local_repo_dir, ignore_errors=True)
 
     log.info(
-        "\uc644\ub8cc",
+        "완료",
         sections=len(result.report_sections),
         area_findings=len(result.area_findings),
         evidence_refs=len(result.evidence_refs),
         status=result.analysis_status,
+        duration_ms=int((time.perf_counter() - _t) * 1000),
     )
     return {"final_result": result.model_dump()}
 
