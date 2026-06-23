@@ -15,7 +15,21 @@ from agenttrace.agents.analysis.nodes.finalize_analysis import (
 from agenttrace.agents.analysis.nodes.quality_gate import quality_gate
 from agenttrace.agents.analysis.nodes.repository_synthesizer import repository_synthesizer
 from agenttrace.agents.analysis.nodes.request_builder import request_builder
+import pytest
 from agenttrace.agents.analysis.nodes.task_result_merge import task_result_merge
+
+
+@pytest.fixture(autouse=True)
+def disable_openai_api_key(monkeypatch):
+    import agenttrace.config
+    import agenttrace.agents.analysis.nodes.finalize_analysis
+    original_get_settings = agenttrace.config.get_settings
+    def mocked_get_settings():
+        settings = original_get_settings()
+        from dataclasses import replace
+        return replace(settings, openai_api_key=None)
+    monkeypatch.setattr(agenttrace.config, "get_settings", mocked_get_settings)
+    monkeypatch.setattr(agenttrace.agents.analysis.nodes.finalize_analysis, "get_settings", mocked_get_settings)
 
 
 def test_content_preprocessor_builds_chunks_from_source_files():

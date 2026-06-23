@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 
+from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from agenttrace.agents.analysis.schemas.result import (
@@ -13,7 +15,9 @@ from agenttrace.agents.analysis.schemas.result import (
     ReportSection,
 )
 from agenttrace.agents.analysis.state import AnalysisState
+from agenttrace.config import get_settings
 from agenttrace.logging_config import get_logger
+from agenttrace.models import build_openai_analysis_model
 
 logger = get_logger(__name__)
 
@@ -81,7 +85,7 @@ def finalize_analysis(state: AnalysisState) -> AnalysisState:
     synthesis = state.get("synthesis", {})
 
     evidence_refs = state.get("evidence_refs") or _build_evidence_refs(state)
-    area_findings = state.get("area_findings") or _build_area_findings(evidence_refs)
+    area_findings = state.get("area_findings") or _build_area_findings(state, evidence_refs)
     report_sections = state.get("report_sections") or _build_report_sections(area_findings)
     
     # Map claim_id to evidence_signal_ids from task results
@@ -185,7 +189,7 @@ def _build_evidence_refs(state: AnalysisState) -> list[dict]:
     ]
 
 
-def _build_area_findings(evidence_refs: list[dict]) -> list[dict]:
+def _build_mock_area_findings(evidence_refs: list[dict]) -> list[dict]:
     ref_id = evidence_refs[0]["id"] if evidence_refs else "ref-limited-1"
     return [
         {
@@ -205,6 +209,191 @@ def _build_area_findings(evidence_refs: list[dict]) -> list[dict]:
         }
         for area_id, area_name in COMMON_ANALYSIS_AREAS
     ]
+
+
+def _build_area_findings(state: AnalysisState, evidence_refs: list[dict]) -> list[dict]:
+    try:
+        settings = get_settings()
+        if not settings.openai_api_key:
+            return _build_mock_area_findings(evidence_refs)
+
+        readme = state.get("readme") or ""
+        file_tree = state.get("file_tree") or []
+        content_chunks = state.get("content_chunks") or []
+
+        file_tree_str = json.dumps(file_tree, indent=2, ensure_ascii=False)
+
+        formatted_chunks = []
+        for chunk in content_chunks:
+            path = chunk.get("file_path") or chunk.get("path") or "unknown"
+            content = chunk.get("content") or ""
+            line_start = chunk.get("line_start") or chunk.get("start_line") or 1
+            line_end = chunk.get("line_end") or chunk.get("end_line") or 1
+            chunk_id = chunk.get("chunk_id") or "unknown"
+            formatted_chunks.append(
+                f"--- File: {path} (Lines {line_start}-{line_end}) [Chunk ID: {chunk_id}] ---\n"
+                f"{content}\n"
+            )
+        chunks_text = "\n".join(formatted_chunks)
+        if len(chunks_text) > 100000:
+            chunks_text = chunks_text[:100000] + "\n... [TRUNCATED] ..."
+
+        batches_definition = [
+            {
+                "name": "Batch 1 (프로젝트 이해 묶음)",
+                "areas": [
+                    ("project-purpose", "프로젝트 목적과 주요 기능"),
+                    ("examples-and-tests", "예제·테스트·확장 지점"),
+                ],
+            },
+            {
+                "name": "Batch 2 (핵심 내부 구조 묶음)",
+                "areas": [
+                    ("execution-flow", "진입점과 핵심 실행 흐름"),
+                    ("architecture-and-modules", "아키텍처와 모듈 관계"),
+                    ("agent-and-llm", "Agent·LLM 핵심 로직"),
+                    ("tools-and-integrations", "Tool·외부 서비스 연동"),
+                    ("state-and-storage", "상태·메모리·데이터 저장"),
+                ],
+            },
+            {
+                "name": "Batch 3 (실행과 적용 묶음)",
+                "areas": [
+                    ("configuration-and-deployment", "설정·실행·배포 방법"),
+                ],
+            }
+        ]
+
+        all_area_findings = []
+        all_evidence_refs = []
+
+        model = build_openai_analysis_model()
+        structured_model = model.with_structured_output(BatchAnalysisResult)
+
+        system_prompt = (
+            "You are an expert AI software analyst. Your task is to analyze a repository based on its README, file tree, "
+            "and source code chunks, and output analysis for specific areas in a structured format.\n"
+            "CRITICAL RULES:\n"
+            "1. You must only analyze the requested areas: {areas_list_text}.\n"
+            "2. Do not include findings or analyze any areas other than the requested ones in this batch.\n"
+            "3. For each analyzed area, produce an 'AreaFinding' object containing the status, summary, list of findings, "
+            "limitations, and unresolved questions.\n"
+            "   - The status must be one of: 'confirmed', 'partially_confirmed', 'unconfirmed', 'not_applicable'.\n"
+            "   - For each finding in findings, the finding 'type' must be either 'fact' or 'inference'.\n"
+            "   - Each finding must reference one or more unique evidence IDs from the 'evidence_refs' list in the 'evidence_refs' field.\n"
+            "4. In the 'evidence_refs' list, output the concrete source code/config/doc files that support your findings. "
+            "Ensure every EvidenceRef has a unique ID (e.g. 'ref-purpose-1', 'ref-exec-2'), clear path, and description.\n"
+            "   - IMPORTANT: If you include line numbers (line_start or line_end) in EvidenceRef, they must be 1-based integers (>= 1). Do not use 0 or negative numbers. If line numbers are not available or not applicable, omit them or set them to null/None.\n"
+            "5. The output must be a single structured JSON matching the BatchAnalysisResult schema."
+        )
+
+        human_prompt = (
+            "Requested areas to analyze in this batch:\n"
+            "{areas_detail_text}\n\n"
+            "Repository README:\n"
+            "{readme}\n\n"
+            "Repository File Tree:\n"
+            "{file_tree}\n\n"
+            "Source Code Chunks:\n"
+            "{chunks_text}\n"
+        )
+
+        for batch in batches_definition:
+            areas_list_text = ", ".join([f"'{area_id}' ({area_name})" for area_id, area_name in batch["areas"]])
+            areas_detail_text = "\n".join([f"- {area_id}: {area_name}" for area_id, area_name in batch["areas"]])
+
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", human_prompt),
+            ])
+
+            prompt_value = prompt.invoke({
+                "areas_list_text": areas_list_text,
+                "areas_detail_text": areas_detail_text,
+                "readme": readme[:30000],
+                "file_tree": file_tree_str[:20000],
+                "chunks_text": chunks_text,
+            })
+
+            batch_res = structured_model.invoke(prompt_value)
+            all_area_findings.extend(batch_res.area_findings)
+            all_evidence_refs.extend(batch_res.evidence_refs)
+
+        # De-duplicate evidence_refs by ID and normalize/sanitize line numbers
+        unique_refs_dict = {}
+        for ref in all_evidence_refs:
+            ref_dict = ref.model_dump() if hasattr(ref, "model_dump") else dict(ref)
+            ref_id = ref_dict.get("id")
+            if not ref_id:
+                continue
+
+            # Sanitize line numbers just in case LLM outputs <= 0
+            for field in ["line_start", "line_end"]:
+                val = ref_dict.get(field)
+                if val is not None and (not isinstance(val, int) or val < 1):
+                    ref_dict[field] = None
+
+            # Ensure line_start <= line_end
+            start = ref_dict.get("line_start")
+            end = ref_dict.get("line_end")
+            if start is not None and end is not None and start > end:
+                ref_dict["line_start"] = end
+
+            if ref_id not in unique_refs_dict:
+                unique_refs_dict[ref_id] = ref_dict
+
+        # Collect and merge area findings
+        findings_dict = {}
+        for af in all_area_findings:
+            af_dict = af.model_dump() if hasattr(af, "model_dump") else dict(af)
+            findings_dict[af_dict["area_id"]] = af_dict
+
+        # Build final findings and ensure references exist, create fallbacks for missing ones
+        final_findings = []
+        for area_id, area_name in COMMON_ANALYSIS_AREAS:
+            if area_id in findings_dict:
+                af_dict = findings_dict[area_id]
+                # Validate and heal evidence references
+                for finding in af_dict.get("findings", []):
+                    valid_refs = []
+                    for ref_id in finding.get("evidence_refs", []):
+                        if ref_id not in unique_refs_dict:
+                            # Create fallback EvidenceRef to prevent schema validation failure
+                            unique_refs_dict[ref_id] = {
+                                "id": ref_id,
+                                "source_type": "other",
+                                "path": "unknown",
+                                "description": f"자동 생성된 {area_name} 분석 근거 참조",
+                                "symbol": None,
+                                "chunk_id": None,
+                                "line_start": None,
+                                "line_end": None,
+                                "content_excerpt": None,
+                                "content_hash": None,
+                            }
+                        valid_refs.append(ref_id)
+                    finding["evidence_refs"] = valid_refs
+                final_findings.append(af_dict)
+            else:
+                final_findings.append({
+                    "area_id": area_id,
+                    "area_name": area_name,
+                    "status": "unconfirmed",
+                    "summary": "분석 중 누락됨",
+                    "findings": [],
+                    "limitations": ["LLM 분석 출력 누락"],
+                    "unresolved_questions": [],
+                })
+
+        # Update evidence_refs in place
+        evidence_refs.clear()
+        evidence_refs.extend(list(unique_refs_dict.values()))
+
+        return final_findings
+
+    except Exception as exc:
+        logger.warning(f"LLM 3-batch analysis failed, falling back to mock: {exc}")
+        return _build_mock_area_findings(evidence_refs)
 
 
 def _build_report_sections(area_findings: list[dict]) -> list[dict]:
