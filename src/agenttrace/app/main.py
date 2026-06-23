@@ -13,14 +13,18 @@ from agenttrace.config import configure_runtime_environment
 from contextlib import asynccontextmanager
 from agenttrace.services.database import init_database
 from agenttrace.api.analysis import init_api_stores
+from agenttrace.logging_config import setup_logging
+
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    setup_logging()
     settings = configure_runtime_environment()
     init_database(settings.database_url)
     init_api_stores(settings.database_url)
     yield
+
 
 
 def create_app() -> FastAPI:

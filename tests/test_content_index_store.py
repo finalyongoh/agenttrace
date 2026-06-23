@@ -94,11 +94,11 @@ def test_repository_analyses_table_contract_and_upsert():
     table_sql = PostgresRepositoryAnalysisSql.table_contract()
     upsert_sql = PostgresRepositoryAnalysisSql.upsert_analysis()
 
-    assert "CREATE TABLE repository_analyses" in table_sql
+    assert "CREATE TABLE agenttrace_repository_analyses" in table_sql
     assert "result_json jsonb NOT NULL" in table_sql
     assert "completed_with_limitations" in table_sql
     assert "UNIQUE (repository_id, snapshot_id, analysis_version)" in table_sql
-    assert "INSERT INTO repository_analyses" in upsert_sql
+    assert "INSERT INTO agenttrace_repository_analyses" in upsert_sql
     assert "ON CONFLICT (repository_id, snapshot_id, analysis_version)" in upsert_sql
 
 
@@ -136,5 +136,5 @@ def test_analysis_persistence_store_writes_analysis_then_report():
         },
     )
 
-    assert "INSERT INTO repository_analyses" in conn.calls[0][0]
+    assert "INSERT INTO agenttrace_repository_analyses" in conn.calls[0][0]
     assert "INSERT INTO analysis_reports" in conn.calls[1][0]

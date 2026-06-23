@@ -25,6 +25,7 @@ class Settings:
     langsmith_endpoint: str | None = None
     database_url: str = "postgresql://agenthub_user:agenthub_password@localhost:5432/agenthub"
     external_ingest_enabled: bool = False
+    github_token: str | None = None
 
 
 
@@ -91,6 +92,7 @@ def get_settings() -> Settings:
             "postgresql://agenthub_user:agenthub_password@localhost:5432/agenthub",
         )
         or "postgresql://agenthub_user:agenthub_password@localhost:5432/agenthub",
+        github_token=_get_env("GITHUB_TOKEN", env_values),
     )
 
 

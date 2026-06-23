@@ -15,9 +15,11 @@ from agenttrace.agents.summary import (
 from agenttrace.agents.summary.service import requires_llm_summary, summarize_repository
 from agenttrace.config import configure_runtime_environment
 from agenttrace.shared.errors import SummaryServiceError
+from agenttrace.logging_config import setup_logging
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    setup_logging()
     parser = argparse.ArgumentParser(
         description="Run AgentTrace repository summary generation once."
     )

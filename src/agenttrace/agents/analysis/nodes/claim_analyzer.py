@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import re
+import time
 
 from agenttrace.agents.analysis.schemas.result import AnalysisClaim
 from agenttrace.agents.analysis.state import AnalysisState
+from agenttrace.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 
 CLAIM_MARKERS = [
@@ -27,7 +32,12 @@ def _strip_markdown(text: str) -> str:
 
 
 def claim_analyzer(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
+    run_id = state.get("run_id", "-")
+    log = logger.bind(node="claim_analyzer", run_id=run_id)
+    log.info("시작")
     readme = state.get("readme", "")
+
     sentences = re.split(r"(?<=[.!?。])\s+|\n+", readme.strip())
     claims: list[dict] = []
     
@@ -68,4 +78,6 @@ def claim_analyzer(state: AnalysisState) -> AnalysisState:
             )
             claims.append(claim.model_dump())
 
+    log.info("완료", claims=len(claims), duration_ms=int((time.perf_counter() - _t) * 1000))
     return {"claims": claims[:8]}
+

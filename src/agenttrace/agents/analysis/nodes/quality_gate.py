@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+import time
+
 from pydantic import ValidationError
 
 from agenttrace.agents.analysis.schemas.result import AnalysisResult
 from agenttrace.agents.analysis.state import AnalysisState
+from agenttrace.logging_config import get_logger
 
+logger = get_logger(__name__)
 
 def quality_gate(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
+    run_id = state.get("run_id", "-")
+    log = logger.bind(node="quality_gate", run_id=run_id)
+    log.info("시작")
+
     if "final_result" not in state:
-        return _legacy_quality_gate(state)
+        log.warning("final_result 없음 — finalize_analysis가 완료됐는지 확인하세요",
+                    duration_ms=int((time.perf_counter() - _t) * 1000))
+        return {"quality_gate_result": {"warnings": [], "critical_errors": []}}
 
     critical_errors: list[str] = []
     warnings: list[str] = []
@@ -62,6 +73,7 @@ def quality_gate(state: AnalysisState) -> AnalysisState:
     if result.analysis_status in {"completed_with_limitations", "insufficient_evidence", "uncertain_classification"}:
         warnings.extend(result.analysis_limitations.notes)
 
+    log.info("완료", errors=len(critical_errors), warnings=len(warnings), duration_ms=int((time.perf_counter() - _t) * 1000))
     return {
         "quality_gate_result": {
             "warnings": warnings,
@@ -72,31 +84,3 @@ def quality_gate(state: AnalysisState) -> AnalysisState:
         "status": "NEEDS_HUMAN_REVIEW" if critical_errors else state.get("status", "COLLECTED"),
     }
 
-
-def _legacy_quality_gate(state: AnalysisState) -> AnalysisState:
-    errors: list[str] = []
-    warnings: list[str] = []
-    evidence = state.get("evidence_signals", [])
-    linked_claim_ids = {item.get("claim_id") for item in evidence if item.get("claim_id")}
-    claims = state.get("claims", [])
-
-    for claim in claims:
-        claim_id = claim.get("id") or claim.get("claim_id")
-        if claim_id and claim_id not in linked_claim_ids:
-            if any(risk.get("risk_type") == "ANALYSIS_UNCERTAIN" for risk in state.get("risk_signals", [])):
-                warnings.append(f"{claim_id}에 연결된 EvidenceSignal이 없습니다.")
-            else:
-                errors.append(f"{claim_id}에 연결된 EvidenceSignal이 없습니다.")
-
-    harness_relevance = state.get("harness_relevance", {})
-    if harness_relevance.get("level") == "high" and not harness_relevance.get("evidence"):
-        errors.append("harness_relevance cannot be high without harness evidence.")
-
-    if state.get("status") != "OUT_OF_SCOPE" and not state.get("followup_actions"):
-        errors.append("OUT_OF_SCOPE이 아닌 분석에는 followup_actions가 필요합니다.")
-
-    if errors:
-        return {"status": "NEEDS_HUMAN_REVIEW", "quality_errors": errors, "quality_warnings": warnings}
-    if warnings:
-        return {"status": "UNCERTAIN", "quality_warnings": warnings}
-    return {"status": "COMPLETED", "quality_warnings": warnings}

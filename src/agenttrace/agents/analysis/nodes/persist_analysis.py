@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from agenttrace.agents.analysis.state import AnalysisState
 from agenttrace.services.report_renderer import render_markdown_report
+from agenttrace.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 
 def build_result_json(state: AnalysisState) -> dict:
@@ -12,6 +17,11 @@ def build_result_json(state: AnalysisState) -> dict:
 
 
 def persist_analysis(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
+    run_id = state.get("run_id", "-")
+    log = logger.bind(node="persist_analysis", run_id=run_id)
+    log.info("시작")
+
     final_result = state.get("final_result", {})
     report_sections = final_result.get("report_sections", [])
     report_markdown = render_markdown_report(report_sections) if report_sections else ""
@@ -48,6 +58,7 @@ def persist_analysis(state: AnalysisState) -> AnalysisState:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    log.info("완료", duration_ms=int((time.perf_counter() - _t) * 1000))
     return {
         "callback_payload": payload,
         "persisted_analysis": payload,

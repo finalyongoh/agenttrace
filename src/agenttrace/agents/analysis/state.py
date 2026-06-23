@@ -51,6 +51,9 @@ class AnalysisState(TypedDict, total=False):
     metadata: dict
     readme: str
     file_tree: list[dict]
+    file_catalog: list[dict]        # build_file_catalog 노드 출력
+    critical_config_paths: list[str]  # 항상 포함 보장 경로 목록
+    repo_map: dict
     selected_files: list[dict]
     output_path: str
     analysis_request: dict

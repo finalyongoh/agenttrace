@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import UTC, datetime
 from importlib import resources
 from typing import Any
@@ -22,6 +23,9 @@ from agenttrace.shared.errors import (
     SummaryGenerationError,
     SummaryServiceError,
 )
+from agenttrace.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 SUMMARY_PROMPT_ID = "repository-summary"
@@ -77,78 +81,106 @@ def summarize_repository(
     *,
     model: Any | None = None,
 ) -> RepositorySummary:
-    model_name = request.options.model_name or get_settings().summary_model
-    prompt_version = request.options.prompt_version or SUMMARY_PROMPT_VERSION
-
-    is_readme_truncated = False
-    if request.readme_text and len(request.readme_text) > MAX_README_CHARS:
-        request.readme_text = (
-            request.readme_text[:MAX_README_CHARS]
-            + "\n\n[Truncated by AgentTrace before summary generation.]"
-        )
-        is_readme_truncated = True
-
-    if _has_insufficient_context(request):
-        return RepositorySummary(
-            repository_id=request.repository.repository_id,
-            snapshot_id=request.snapshot_id,
-            full_name=request.repository.full_name,
-            github_url=request.repository.github_url,
-            summary_status=SummaryStatus.INSUFFICIENT_CONTEXT,
-            one_line_summary=None,
-            readme_summary=None,
-            project_purpose=None,
-            target_users=[],
-            possible_agent_relevance=AgentRelevanceHint(
-                level=AgentRelevanceLevel.UNKNOWN,
-                reason="README and repository description were not available for an AgentHub relevance hint.",
-            ),
-            followup_hints=FollowupHints(),
-            summary_limitations=SummaryLimitations(
-                missing_inputs=_missing_inputs(request),
-                notes=list(SUMMARY_BASELINE_NOTES),
-            ),
-            generated_at=_utc_now_iso(),
-            model_name=model_name,
-            prompt_version=prompt_version,
-            error_message=None,
-        )
-
-    if model is None:
-        raise MissingSummaryModelError("A summary LLM model is required.")
-    structured_model = model.with_structured_output(RepositorySummary)
-
-    prompt_value = build_summary_prompt_template().invoke(_summary_payload(request))
+    _t = time.perf_counter()
+    repo_id = str(request.repository.repository_id or "-")
+    log = logger.bind(node="summarize_repository", repository_id=repo_id, full_name=request.repository.full_name)
+    log.info("시작")
 
     try:
-        result = structured_model.invoke(prompt_value)
-    except Exception as exc:
-        raise SummaryGenerationError(
-            f"Repository summary generation failed: {exc}"
-        ) from exc
+        model_name = request.options.model_name or get_settings().summary_model
+        prompt_version = request.options.prompt_version or SUMMARY_PROMPT_VERSION
 
-    if not isinstance(result, RepositorySummary):
+        is_readme_truncated = False
+        if request.readme_text and len(request.readme_text) > MAX_README_CHARS:
+            request.readme_text = (
+                request.readme_text[:MAX_README_CHARS]
+                + "\n\n[Truncated by AgentTrace before summary generation.]"
+            )
+            is_readme_truncated = True
+
+        if _has_insufficient_context(request):
+            res = RepositorySummary(
+                repository_id=request.repository.repository_id,
+                snapshot_id=request.snapshot_id,
+                full_name=request.repository.full_name,
+                github_url=request.repository.github_url,
+                summary_status=SummaryStatus.INSUFFICIENT_CONTEXT,
+                one_line_summary=None,
+                readme_summary=None,
+                project_purpose=None,
+                target_users=[],
+                possible_agent_relevance=AgentRelevanceHint(
+                    level=AgentRelevanceLevel.UNKNOWN,
+                    reason="README and repository description were not available for an AgentHub relevance hint.",
+                ),
+                followup_hints=FollowupHints(),
+                summary_limitations=SummaryLimitations(
+                    missing_inputs=_missing_inputs(request),
+                    notes=list(SUMMARY_BASELINE_NOTES),
+                ),
+                generated_at=_utc_now_iso(),
+                model_name=model_name,
+                prompt_version=prompt_version,
+                error_message=None,
+            )
+            status_val = res.summary_status.value if hasattr(res.summary_status, "value") else str(res.summary_status)
+            relevance_val = "unknown"
+            if res.possible_agent_relevance:
+                lvl = res.possible_agent_relevance.level
+                relevance_val = lvl.value if hasattr(lvl, "value") else str(lvl)
+            log.info("완료", status=status_val, relevance=relevance_val, duration_ms=int((time.perf_counter() - _t) * 1000))
+            return res
+
+        if model is None:
+            raise MissingSummaryModelError("A summary LLM model is required.")
+        structured_model = model.with_structured_output(RepositorySummary)
+
+        prompt_value = build_summary_prompt_template().invoke(_summary_payload(request))
+
         try:
-            result = RepositorySummary.model_validate(result)
+            result = structured_model.invoke(prompt_value)
         except Exception as exc:
             raise SummaryGenerationError(
-                "Repository summary output did not match the schema."
+                f"Repository summary generation failed: {exc}"
             ) from exc
 
-    guarded_result = _apply_input_guards(
-        result,
-        request,
-        model_name=model_name,
-        prompt_version=prompt_version,
-    )
-    if is_readme_truncated:
-        if "README" not in guarded_result.summary_limitations.truncated_inputs:
-            guarded_result.summary_limitations.truncated_inputs.append("README")
+        if not isinstance(result, RepositorySummary):
+            try:
+                result = RepositorySummary.model_validate(result)
+            except Exception as exc:
+                raise SummaryGenerationError(
+                    "Repository summary output did not match the schema."
+                ) from exc
 
-    return _constrain_followup_hints(
-        guarded_result,
-        request,
-    )
+        guarded_result = _apply_input_guards(
+            result,
+            request,
+            model_name=model_name,
+            prompt_version=prompt_version,
+        )
+        if is_readme_truncated:
+            if "README" not in guarded_result.summary_limitations.truncated_inputs:
+                guarded_result.summary_limitations.truncated_inputs.append("README")
+
+        res = _constrain_followup_hints(
+            guarded_result,
+            request,
+        )
+        status_val = res.summary_status.value if hasattr(res.summary_status, "value") else str(res.summary_status)
+        relevance_val = "unknown"
+        if res.possible_agent_relevance:
+            lvl = res.possible_agent_relevance.level
+            relevance_val = lvl.value if hasattr(lvl, "value") else str(lvl)
+        log.info(
+            "완료",
+            status=status_val,
+            relevance=relevance_val,
+            duration_ms=int((time.perf_counter() - _t) * 1000)
+        )
+        return res
+    except Exception as exc:
+        log.error("실패", error=str(exc), duration_ms=int((time.perf_counter() - _t) * 1000))
+        raise
 
 
 def build_failed_summary(

@@ -1,179 +1,68 @@
-# AgentTrace Project Routing
+# AgentTrace Project Routing & Guidelines
 
-## Context Handling
+이 문서는 AgentTrace 프로젝트에서 작업할 때 에이전트(AI)가 반드시 지켜야 할 행동 제약 조건과 규칙을 정의합니다.
 
-- Use `context-mode` for repo-wide search, analysis, counting, filtering, parsing, and summarizing.
-- Prefer `ctx_batch_execute` for gathering multiple related command outputs.
-- Prefer `ctx_execute` for derived answers from files or command output.
-- Do not dump large raw files or command output into chat when a filtered answer is enough.
+---
 
-## Reference Artifacts
+## 🗺️ Documentation Map (참조 문서 지도)
 
-- Reference project artifacts from `artifacts/current` in the repository `finalyongoh/docs`.
-- Use the local clone at [docs/reference](file:///Users/wolyong/workspace/AgentHub/agenttrace/docs/reference) to inspect reference artifact documents. Do not rely on old copies.
-- Always run `rtk git -C docs/reference pull` at the start of any new work session to ensure the local documents are up-to-date.
-- Treat artifact documents in `docs/reference/artifacts/current` as read-only reference material.
+상세 정보는 아래 전용 문서들을 가상환경 작업 및 분석 시 적극 참조하십시오.
 
-## GitHub MCP
+* 🛠️ **[development.md](file:///Users/wolyong/workspace/AgentHub/agenttrace/docs/development.md)**: 패키지 관리(uv), 환경변수 설정, 구동 명령어 및 pytest 테스트 가이드.
+* 📝 **[logging.md](file:///Users/wolyong/workspace/AgentHub/agenttrace/docs/logging.md)**: 중앙 structlog 설정, JSON 로깅 아키텍처 및 로그 필터 명령어 모음.
+* ⚠️ **[troubleshooting_learnings.md](file:///Users/wolyong/workspace/AgentHub/agenttrace/docs/troubleshooting_learnings.md)**: 과거 개발 시 발생했던 고유 스코프 에러 및 라이브러리 충돌 디버깅 해결 로그.
+* 📦 **[docs/reference](file:///Users/wolyong/workspace/AgentHub/agenttrace/docs/reference)**: 요구사항 스펙 및 MVP 설계 기준 문서의 로컬 복제본 리포지토리.
 
-- Use GitHub MCP for repository, issue, pull request, and review context.
-- Default repository for this workspace: `YonghoBae/agenttrace`.
-- Use GitHub MCP instead of ad hoc shell/API calls when inspecting PRs, issues, comments, or GitHub-hosted review data.
+---
 
-## LangChain and LangGraph Docs MCP
+## 1. Context Handling & Reference (컨텍스트 관리)
 
-- Use `mcp__langchain_docs` before answering or changing code that depends on current LangChain, LangGraph, or LangSmith APIs.
-- Prefer Python docs for this repo unless the code path is clearly JavaScript-specific.
-- For broad questions, start with `search_docs_by_lang_chain`.
-- For exact API details or examples, use `query_docs_filesystem_docs_by_lang_chain` on the returned `.mdx` path.
+- **검색/분석 필터링 활용**: 리포지토리 검색, 세어보기, 파싱 및 요약에는 대화에 소스를 직접 뿌리기보다 `context-mode` 및 배치 실행(`ctx_batch_execute`, `ctx_execute`)을 우선 사용하십시오.
+- **문서 동기화**: 매 세션 시작 시 반드시 `rtk git -C docs/reference pull`을 실행하여 최신 참조 아티팩트를 획득한 후 해당 경로(`docs/reference/artifacts/current`)의 문서를 읽기 전용으로 참조하십시오.
 
-## Development Workflow
+## 2. MCP Server Routing (도구 연동)
 
-- Add or update tests before changing behavior.
-- Run focused tests first, then full `pytest` before claiming completion.
-- Treat LLM output as untrusted unless the code explicitly constrains or re-derives fields from deterministic inputs.
+- **GitHub MCP**: PR, 이슈, 커멘트 및 리뷰 관련 조사 작업 시 셸 커맨드 대신 GitHub MCP를 최우선으로 연동하여 사용하십시오. (기본 대상: `YonghoBae/agenttrace`)
+- **LangChain Docs MCP**: LangChain, LangGraph, LangSmith 관련 API 변경이나 새로운 기능을 구현할 때, 반드시 `mcp__langchain_docs`를 이용해 문서를 최우선 검색하고 적용 방안을 검증하십시오. (파이썬 우선)
 
-## RTK (Rust Token Killer) Command Proxy
+## 3. Development Workflow (개발 절차)
 
-- Always prefix terminal commands with `rtk` (e.g., `rtk git status`, `rtk pytest`, `rtk grep`, `rtk find`) to minimize token consumption by 60-90%.
-- Use `rtk gain` to view token savings stats.
+- **RTK 프록시**: 모든 터미널 명령어(git, pytest 등)는 반드시 `rtk` 접두사를 붙여 토큰 소비를 최소화해야 합니다. (예: `rtk git status`)
+- **TDD (테스트 우선)**: 코드를 수정하거나 노드 동작을 바꾸기 전에 테스트 코드를 먼저 추가 혹은 보완하십시오.
+- **점진적 코드 수정**: 대량의 파일을 전체 덮어쓰기보다 `replace_file_content` 및 `multi_replace_file_content`로 변경이 필요한 코드 블록만 치환하여 정확도를 높이고 아웃풋 토큰을 절감하십시오.
+- **종속성 관리**: 패키지 설치에는 반드시 `uv`를 사용하고 변경 시 `uv.lock`이 커밋에 보장되게 하십시오.
+- **명세서 동기화 보장**: 영역 ID, 보고서 섹션명, JSON 구조화 스키마 등 인터페이스 상수를 수정할 때는 반드시 `docs/reference/artifacts/current/AI_ANALYSIS_SPEC.md` 및 `ANALYSIS_AGENT_IMPLEMENTATION_EVAL_SPEC.md`에 명시된 목표 규격을 읽고 100% 동일하게 맞춰야 합니다.
+- **외부 시스템 영향 검토 (사용자 승인 필수)**: 데이터베이스 컬럼명이나 외부 백엔드(Spring 등)와 통신하는 API 요청/응답 필드 및 내부 JSON 키명을 변경할 때는, 기존 시스템과의 연동이 깨질 수 있으므로 변경 적용 전 반드시 사용자에게 명시적인 승인과 확인을 받아야 합니다.
+- **Specification-as-Code**: 목표 설계 문서와 소스 코드 간의 정합성을 검증하는 정적 테스트 코드를 작성하고 유지보수하여 완료 전 항상 자동 검증이 통과되도록 관리하십시오.
 
-## Package Management (uv)
+## 4. Node Logging Pattern (노드 로깅 지침)
 
-- This project uses `uv` exclusively for package management. Do not use `pip install` directly.
-- Python version: `>=3.12,<3.13`
-- Lock file: `uv.lock` (committed to version control)
+새로운 파이프라인 노드 작성 시 또는 기존 노드 개선 시 다음의 구조화 로그 패턴을 엄격하게 구현하십시오.
 
-### Setup
+```python
+import time
+from agenttrace.logging_config import get_logger
+from agenttrace.agents.analysis.state import AnalysisState
 
-```bash
-# 환경 초기화 (최초 또는 lock 변경 후)
-uv sync --extra dev
+logger = get_logger(__name__)
+
+def my_node(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
+    run_id = state.get("run_id", "-")
+    
+    # run_id와 현재 노드명을 항상 구조화 필드로 바인딩
+    log = logger.bind(node="my_node", run_id=run_id)
+    log.info("시작")
+    
+    # ... 노드 전용 구현 로직 ...
+    
+    # 노드 종료 시 성공 결과 주요 정보를 딕셔너리로 바인딩하여 1회 완료 로그 생성
+    log.info(
+        "완료", 
+        key=value,  # 성공 결과 지표 등
+        duration_ms=int((time.perf_counter() - _t) * 1000)
+    )
+    return result
 ```
 
-### Adding / Removing Packages
-
-```bash
-# 런타임 의존성 추가
-uv add <package>
-
-# dev 의존성 추가
-uv add --optional dev <package>
-
-# 패키지 제거
-uv remove <package>
-```
-
-### Running Tests
-
-```bash
-# 전체 테스트
-rtk .venv/bin/pytest
-
-# 특정 파일만
-rtk .venv/bin/pytest tests/path/to/test_file.py -x -q
-```
-
-### Running the API Server
-
-```bash
-rtk .venv/bin/agenttrace-api
-```
-
-### Notes
-
-- `uv.lock` is the single source of truth for installed packages.
-- After pulling changes, always run `uv sync --extra dev` to stay in sync.
-- The venv is located at `.venv/` in the project root.
-
-## Environment Setup
-
-`.env` 파일을 프로젝트 루트에 생성 (`.env.example` 참고):
-
-```bash
-cp .env.example .env
-# 이후 .env에 실제 키 값 입력
-```
-
-주요 환경변수:
-
-| 변수 | 설명 | 기본값 |
-|---|---|---|
-| `OPENAI_API_KEY` | OpenAI API 키 | - |
-| `OPENAI_API_BASE` | API 엔드포인트 (커스텀 시) | OpenAI 공식 |
-| `AGENTTRACE_ANALYSIS_MODEL` | 분석 LLM 모델 | `gpt-4o-mini` |
-| `AGENTTRACE_SUMMARY_MODEL` | 요약 LLM 모델 | `gpt-4o-mini` |
-| `AGENTTRACE_REPO_INGEST_BASE_URL` | gitingest 주소 (로컬 시 변경) | `https://gitingest.com` |
-| `AGENTTRACE_REPO_INGEST_HOST_HEADER` | gitingest Host 헤더 오버라이드 | - |
-| `AGENTTRACE_EXTERNAL_INGEST_ENABLED` | 외부 gitingest 사용 여부 | `false` |
-| `DATABASE_URL` | PostgreSQL 연결 문자열 | `postgresql://agenthub_user:agenthub_password@localhost:5432/agenthub` |
-| `LANGSMITH_TRACING` | LangSmith 트레이싱 활성화 | `true` |
-| `LANGSMITH_API_KEY` | LangSmith API 키 | - |
-
-## Running the Project
-
-### API 서버
-
-```bash
-# 방법 1: entrypoint 사용 (권장)
-rtk .venv/bin/agenttrace-api
-
-# 방법 2: Makefile 사용
-make dev-api
-
-# 방법 3: 직접 uvicorn 실행
-.venv/bin/python -m uvicorn agenttrace.app.main:app --app-dir src --host 127.0.0.1 --port 8000
-```
-
-기본 주소: `http://127.0.0.1:8000`
-
-### Analysis CLI (단독 실행)
-
-```bash
-rtk .venv/bin/python -m agenttrace.agents.analysis.cli data/sample_repo.json --out out/analysis.json
-```
-
-### Summary CLI
-
-```bash
-rtk .venv/bin/agenttrace-summary
-```
-
-### Worker
-
-```bash
-rtk .venv/bin/agenttrace-worker
-```
-
-### LangGraph Dev Server
-
-`langgraph.json` 기반으로 LangGraph Studio와 연동 가능:
-
-```bash
-# langgraph CLI 설치 후
-langgraph dev
-```
-
-그래프 진입점: `src/agenttrace/agents/analysis/graph.py:graph`
-
-## Testing Guide
-
-```bash
-# 전체 테스트 (완료 기준)
-rtk .venv/bin/pytest
-
-# 빠른 실패 우선 실행
-rtk .venv/bin/pytest -x -q
-
-# 특정 도메인만
-rtk .venv/bin/pytest tests/test_analysis_v2_nodes.py -x -q   # analysis nodes
-rtk .venv/bin/pytest tests/test_api_analysis.py -x -q        # API 레이어
-rtk .venv/bin/pytest tests/test_summary_service.py -x -q     # summary 서비스
-
-# 커버리지 확인 (pytest-cov 설치 시)
-rtk .venv/bin/pytest --cov=src/agenttrace --cov-report=term-missing
-```
-
-> 테스트는 실제 DB/LLM 호출 없이 mock 기반으로 동작.
-> `tests/fixtures/` 아래 샘플 데이터 사용.
-
+- LLM 실패·fallback 처리 시에는 `log.warning()`, 코드 예외 상황에는 `log.error()`를 사용하며 context-specific 정보 외의 API 키 등 민감 정보가 로그 문자열에 포함되어서는 안 됩니다.

@@ -5,10 +5,15 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-from agenttrace.agents.analysis.graph import build_graph
+from agenttrace.config import configure_runtime_environment
+from agenttrace.logging_config import setup_logging
 
 
 def main() -> None:
+    configure_runtime_environment()
+    setup_logging()
+
+    from agenttrace.agents.analysis.graph import build_graph
     parser = argparse.ArgumentParser(description="Run AgentHub LangGraph analysis prototype.")
     parser.add_argument("snapshot", help="Path to repository snapshot JSON")
     parser.add_argument("--out", default="out/analysis.json", help="Output JSON path")

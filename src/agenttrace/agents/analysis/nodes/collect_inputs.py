@@ -1,9 +1,14 @@
 from pathlib import Path
+import time
 from uuid import UUID
 
 from agenttrace.agents.analysis.input_providers import AnalysisInputAssembler
 from agenttrace.agents.analysis.schemas.input import AnalysisInputRequest
 from agenttrace.agents.analysis.state import AnalysisState
+from agenttrace.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 
 def is_safe_path(base_dir: Path, target_path: str | Path) -> bool:
@@ -16,6 +21,11 @@ def is_safe_path(base_dir: Path, target_path: str | Path) -> bool:
 
 
 def collect_inputs(state: AnalysisState) -> AnalysisState:
+    _t = time.perf_counter()
+    run_id = state.get("run_id", "-")
+    log = logger.bind(node="collect_inputs", run_id=run_id)
+    log.info("시작")
+
     if "analysis_request" not in state:
         snapshot = state.get("repository_snapshot", {}) or {}
         file_tree_items = snapshot.get("file_tree", []) or state.get("file_tree", [])
@@ -47,7 +57,7 @@ def collect_inputs(state: AnalysisState) -> AnalysisState:
                 if (item.get("path") if isinstance(item, dict) else item)
             ],
             "source_files": selected_files,
-            "external_ingest": {"enabled": False, "provider": "gitingest"},
+            "external_ingest": snapshot.get("external_ingest", {"enabled": False, "provider": "gitingest"}),
         }
     else:
         request_payload = state["analysis_request"]
@@ -74,7 +84,16 @@ def collect_inputs(state: AnalysisState) -> AnalysisState:
         s_dict["content"] = ""
         state_source_files.append(s_dict)
 
+    log.info(
+        "완료",
+        source_files=len(assembled.source_files),
+        mode=assembled.analysis_mode,
+        provider=assembled.input_manifest.get("source_provider", "none"),
+        missing=assembled.missing_inputs,
+        duration_ms=int((time.perf_counter() - _t) * 1000),
+    )
     return {
+
         "run_id": run_id,
         "local_repo_dir": str(local_repo_dir),
         "full_name": request.repository.full_name,
