@@ -7,7 +7,7 @@ __pycache__/
 .worktrees/
 out/*.json
 !out/.gitkeep
-temp_docs_repo/
+docs/reference/
 tmp/
 
 # Local agents configuration and runtime artifacts
