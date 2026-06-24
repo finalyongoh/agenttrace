@@ -56,9 +56,9 @@ def create_react_tools(
                 full_path = local_repo_dir / file_path
                 if full_path.exists():
                     content = full_path.read_text(encoding="utf-8", errors="replace")
-                    # 파일이 너무 크면 앞부분만
-                    if len(content) > 50000:
-                        content = content[:50000] + "\n\n... [truncated, file too large]"
+                    # 파일이 너무 크면 앞부분만 (컨텍스트 폭발 방지)
+                    if len(content) > 20000:
+                        content = content[:20000] + "\n\n... [truncated, file too large]"
                     _file_cache[file_path] = content
                     return content
                 return f"File not found: {file_path}"
@@ -84,11 +84,12 @@ def create_react_tools(
             return "No results: query or local_repo_dir is empty."
 
         query_lower = query.lower()
+        # 최대 30개 결과로 제한 (컨텍스트 폭발 방지)
         results: list[str] = []
         files_data = repo_map.get("files", {})
 
         for file_path_str, file_data in files_data.items():
-            if len(results) >= 50:
+            if len(results) >= 30:
                 break
             # 심볼 매칭으로 빠른 검색
             definitions = file_data.get("definitions", [])

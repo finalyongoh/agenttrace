@@ -177,26 +177,24 @@ def _react_evaluate(
     file_catalog: list[dict],
     log,
 ) -> bool:
-    """ReAct 에이전트로 claim 검증. LLM이 도구로 코드를 능동 탐색한다.
+    """create_agent 기반 ReAct 에이전트로 claim 검증.
 
     algorithm.md §22.5: Repository Map으로 후보를 찾은 후 원문 청크를 다시 수집한다.
+    LangChain v1 create_agent 사용 (middleware 시스템 활용).
     """
     from agenttrace.agents.analysis.react_tools import create_react_tools
+    from langchain.agents import create_agent
 
     settings = get_settings()
     if not settings.openai_api_key:
         return False
 
     try:
-        from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-
         model = build_openai_analysis_model()
         tools = create_react_tools(local_repo_dir, repo_map, file_catalog)
-        model_with_tools = model.bind_tools(tools)
 
-        # LLM이 도구로 읽은 파일 경로 추적
+        # explored_files 추적용 컨테이너 (도구 클로저에서 공유)
         explored_files: list[str] = []
-        tool_map = {t.name: t for t in tools}
 
         system_prompt = (
             "You are an expert AI software analyst verifying technical claims from a project's README.\n\n"
@@ -236,71 +234,44 @@ def _react_evaluate(
             "then read the files that contain those terms. Verify the implementation exists.\n"
         )
 
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt),
-        ]
+        # create_agent로 에이전트 구축 (도구 루프 자동 관리)
+        agent = create_agent(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            response_format=BatchVerificationResult,
+        )
 
-        # ReAct 루프: 최대 15회 도구 호출 (충분한 탐색 보장)
-        max_iterations = 15
-        for i in range(max_iterations):
-            response = model_with_tools.invoke(messages)
-            messages.append(response)
+        # 에이전트 실행
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": user_prompt}]},
+            config={"recursion_limit": 40},
+        )
 
-            if not response.tool_calls:
-                # 도구 호출 없음 → 최종 답변으로 판단
-                break
-
-            log.info("ReAct 도구 호출",
-                     iteration=i + 1,
-                     tools=[tc["name"] for tc in response.tool_calls])
-
-            # 도구 실행 및 파일 추적
-            for tc in response.tool_calls:
-                tool_name = tc["name"]
-                tool_args = tc["args"]
-                tool_fn = tool_map.get(tool_name)
-                if tool_fn:
-                    # read_file로 읽은 파일 경로 추적
-                    if tool_name == "read_file":
-                        fp = tool_args.get("file_path", "")
+        # 도구 호출 추적: messages에서 read_file 도구 호출 추출
+        messages = result.get("messages", [])
+        for msg in messages:
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    if tc.get("name") == "read_file":
+                        fp = tc.get("args", {}).get("file_path", "")
                         if fp and "error" not in fp.lower():
                             explored_files.append(fp)
-                    # search_code로 발견한 파일 경로 추적
-                    elif tool_name == "search_code":
-                        pass  # search 결과에서 파일 경로 추출은 생략, read_file 시점에 추적
+                    log.info("ReAct 도구 호출", tool=tc.get("name"))
 
-                    result = tool_fn.invoke(tool_args)
-                    messages.append(ToolMessage(
-                        content=str(result)[:50000],
-                        tool_call_id=tc["id"],
-                    ))
-                else:
-                    log.warning("알 수 없는 도구", tool=tool_name)
+        # 구조화 출력 추출
+        batch_result = result.get("structured_response")
+        if batch_result is None:
+            # fallback: messages에서 AIMessage 찾기
+            for msg in reversed(messages):
+                if hasattr(msg, "content") and isinstance(msg.content, str):
+                    break
+            log.warning("structured_response 없음, fallback으로 처리")
+            return False
 
-        # 최종 구조화 출력으로 verdict 수집
-        structured_model = model.with_structured_output(BatchVerificationResult)
         explored_files_unique = list(dict.fromkeys(explored_files))
-        explored_files_str = "\n".join(f"  - {f}" for f in explored_files_unique)
-        final_prompt = ChatPromptTemplate.from_messages([
-            ("system", (
-                "Based on your code exploration, provide final verdicts for each claim.\n"
-                "IMPORTANT: You MUST use the actual file paths and line numbers from the files you read.\n"
-                "Do NOT use placeholder paths like 'path/to/file.js'. Use the real paths you explored.\n"
-                f"Files you actually read with read_file:\n{explored_files_str}\n\n"
-                "For each claim, provide:\n"
-                "- file_path: MUST be one of the real file paths listed above (or another real path you searched)\n"
-                "- line_start/line_end: actual line numbers from the code you saw\n"
-                "- content_excerpt: actual code snippet from the file you read\n"
-            )),
-            ("human", "Provide your final BatchVerificationResult for these claims:\n{claims}"),
-        ])
-        claims_formatted = "\n".join(
-            f"- {c['claim_id']}: {c['claim_text']}" for c in claims
-        )
-        result = structured_model.invoke(final_prompt.invoke({"claims": claims_formatted}))
 
-        for v in result.verdicts:
+        for v in batch_result.verdicts:
             signal_ids = []
             verdict_status = v.verdict
             limitations = []
@@ -408,10 +379,17 @@ def evidence_evaluator(state: AnalysisState) -> AnalysisState:
     if not llm_success:
         # Fallback: 기존 청크 기반 평가 (하위 호환성)
         all_chunks = state.get("selected_chunks", [])
-        chunks_by_id = {c["chunk_id"]: c for c in all_chunks} if all_chunks else []
+        # selected_chunks가 비어있으면 chunk_index에서 직접 가져옴
+        if not all_chunks:
+            chunk_index = state.get("chunk_index", {}) or {}
+            all_chunks = list(chunk_index.get("chunks_by_id", {}).values())
+        chunks_by_id = {c["chunk_id"]: c for c in all_chunks} if all_chunks else {}
 
         task_parts = state.get("task_parts", [])
-        if not task_parts:
+        # task_parts가 비어있거나 chunks가 비어있으면 all_chunks로 직접 구성
+        if not task_parts or all(
+            not part.get("chunks") for part in task_parts
+        ):
             task_parts = [{
                 "part_id": f"{task['task_id']}-part-001",
                 "task_id": task["task_id"],

@@ -158,6 +158,15 @@ def evidence_scout(state: AnalysisState) -> AnalysisState:
         if tp not in file_symbols and tp in files_data:
             file_symbols[tp] = []
 
+    # 구조 지도에 파일이 없으면 빈 search_attempt 반환 (fallback 경로 유도)
+    if not file_symbols:
+        log.info("완료", mode="react", files_in_map=0,
+                 duration_ms=int((time.perf_counter() - _t) * 1000))
+        return {
+            "selected_chunks": [],
+            "search_attempt": {},
+        }
+
     # 구조 지도 텍스트 생성
     structure_lines = [
         f"=== Structure Map for area: {area_id} ===",
