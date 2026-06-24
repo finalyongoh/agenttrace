@@ -28,7 +28,7 @@ class Settings:
     github_token: str | None = None
     # finalize_analysis 전용 — evidence_evaluator와 독립
     finalize_model_timeout: int = 90          # 환경변수: AGENTTRACE_FINALIZE_MODEL_TIMEOUT
-    finalize_model_max_tokens: int = 8192     # 환경변수: AGENTTRACE_FINALIZE_MODEL_MAX_TOKENS
+    finalize_model_max_tokens: int = 16384     # 환경변수: AGENTTRACE_FINALIZE_MODEL_MAX_TOKENS
 
 
 

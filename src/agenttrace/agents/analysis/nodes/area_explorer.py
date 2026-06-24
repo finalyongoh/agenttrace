@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 import os
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -39,12 +40,32 @@ def _build_system_prompt() -> str:
         "using tools and produce findings for 8 analysis areas.\n\n"
         "ANALYSIS AREAS (you MUST cover ALL of these):\n"
         f"{areas_text}\n\n"
-        "EXPLORATION STRATEGY (follow this order):\n"
-        "1. Call get_structure_map to see all files and their ranked symbols\n"
-        "2. For each area, identify keywords and use search_code to find relevant code\n"
-        "3. Use list_symbols on promising files to check their contents\n"
-        "4. Use read_file to read the FULL content of source files that contain relevant code\n"
-        "5. Read at least 5-10 source code files across different areas before producing findings\n\n"
+        "EXPLORATION STRATEGY:\n"
+        "1. Review the pre-loaded key source files provided in the user message\n"
+        "2. The pre-loaded files should be sufficient for ALL 8 areas — analyze them directly\n"
+        "3. Use search_code ONLY if a specific area lacks evidence in pre-loaded files\n"
+        "4. Use read_file ONLY for files not already pre-loaded\n"
+        "5. Produce your structured response as soon as you have enough evidence\n\n"
+        "EFFICIENCY RULES:\n"
+        "- MINIMIZE tool calls. Start producing findings from pre-loaded files immediately.\n"
+        "- Do NOT call get_structure_map — the structure map is already in the user message.\n"
+        "- Do NOT read more than 2-3 additional files beyond what's pre-loaded.\n"
+        "- Do NOT read test files or documentation unless critical.\n\n"
+        "QUALITY RULES (CRITICAL for good output):\n"
+        "- For each area, provide at least 2-3 findings with specific details.\n"
+        "- Each finding MUST reference specific code: file paths, function names, class names, "
+        "or line numbers from the source files.\n"
+        "- Do NOT write vague summaries. Instead, describe WHAT the code does and HOW it works.\n"
+        "- Example GOOD finding: 'The resolve-library-id tool in packages/mcp/src/index.ts "
+        "accepts a library name and returns matched library IDs by querying the Context7 API'\n"
+        "- Example BAD finding: 'The project has tools and integrations'\n"
+        "- Each AreaFinding summary should be 2-3 sentences describing the key findings for that area.\n"
+        "- Include specific function names, class names, API endpoints, or configuration keys "
+        "that you found in the source code.\n"
+        "- EvidenceRef descriptions should explain what the code at that location does.\n"
+        "- For EvidenceRef line_start and line_end: specify the ACTUAL line numbers where the "
+        "relevant code is located, NOT always line 1-20. Look at the pre-loaded file contents "
+        "and identify the specific lines where each feature is implemented.\n"
         "CRITICAL RULES:\n"
         "- You MUST read actual source code files (.ts, .py, .go, .js, .rs, .java), "
         "NOT just README or .mdx docs.\n"
@@ -61,31 +82,129 @@ def _build_system_prompt() -> str:
     )
 
 
+def _select_key_files(state: AnalysisState, max_files: int = 15, max_chars: int = 60000) -> list[tuple[str, str]]:
+    """repo_map PageRank 상위 실제 소스 코드 파일들을 선택하여 내용을 읽어온다.
+
+    메타데이터(package.json, .yml, Dockerfile 등)는 최대 3개로 제한하고,
+    실제 소스 코드(.ts, .py, .go 등)를 우선 선택한다.
+    """
+    repo_map = state.get("repo_map", {}) or {}
+    definition_ranks = repo_map.get("definition_ranks", {}) or {}
+    file_catalog = state.get("file_catalog", []) or []
+    catalog_by_path = {item.get("path"): item for item in file_catalog if isinstance(item, dict)}
+
+    source_exts = {".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs", ".java"}
+    metadata_exts = {".json", ".yml", ".yaml", ".toml"}
+    metadata_names = {"Dockerfile", "docker-compose.yml", ".env.example", "tsconfig.json"}
+
+    file_scores: dict[str, float] = {}
+    for key, score in list(definition_ranks.items())[:300]:
+        if "::" in key:
+            path, _ = key.rsplit("::", 1)
+            file_scores[path] = file_scores.get(path, 0.0) + score
+
+    ranked = sorted(file_scores.items(), key=lambda x: -x[1])
+
+    local_repo_dir_str = state.get("local_repo_dir")
+    local_repo_dir = Path(local_repo_dir_str) if local_repo_dir_str else None
+
+    source_files: list[tuple[str, str, float]] = []
+    metadata_files: list[tuple[str, str, float]] = []
+
+    for path, score in ranked:
+        if not local_repo_dir:
+            continue
+        ext = "." + path.rsplit(".", 1)[-1] if "." in path else ""
+        name = path.rsplit("/", 1)[-1]
+        category = catalog_by_path.get(path, {}).get("category", "")
+
+        is_metadata = ext in metadata_exts or name in metadata_names or name.endswith((".env", ".example"))
+        is_source = ext in source_exts or (category == "source" and not is_metadata)
+
+        try:
+            full_path = (local_repo_dir / path).resolve()
+            if not full_path.is_file() or not full_path.is_relative_to(local_repo_dir.resolve()):
+                continue
+            content = full_path.read_text(encoding="utf-8", errors="replace")
+            if len(content) > 8000:
+                content = content[:8000] + "\n... [truncated]"
+        except OSError:
+            continue
+
+        if is_source:
+            source_files.append((path, content, score))
+        elif is_metadata:
+            metadata_files.append((path, content, score))
+
+    selected: list[tuple[str, str]] = []
+    total_chars = 0
+
+    # 1단계: 실제 소스 코드 파일 우선 선택 (최대 max_files - 3개)
+    source_limit = max_files - 3
+    for path, content, _ in source_files[:source_limit]:
+        if total_chars + len(content) > max_chars:
+            break
+        selected.append((path, content))
+        total_chars += len(content)
+
+    # 2단계: 메타데이터 파일 최대 3개 추가 (package.json, Dockerfile 등)
+    for path, content, _ in metadata_files[:3]:
+        if len(selected) >= max_files:
+            break
+        if total_chars + len(content) > max_chars:
+            break
+        selected.append((path, content))
+        total_chars += len(content)
+
+    # 3단계: 빈 자리가 있으면 소스 파일 더 추가
+    for path, content, _ in source_files[source_limit:]:
+        if len(selected) >= max_files:
+            break
+        if total_chars + len(content) > max_chars:
+            break
+        selected.append((path, content))
+        total_chars += len(content)
+
+    return selected
+
+
 def _build_user_prompt(state: AnalysisState) -> str:
-    readme = (state.get("readme") or "")[:20000]
+    readme = (state.get("readme") or "")[:6000]
     repo_map_render = state.get("repo_map_render") or ""
     file_tree = state.get("file_tree") or []
+    key_files = _select_key_files(state)
 
     file_tree_str = ""
     if file_tree:
         paths = []
-        for item in file_tree[:200]:
+        for item in file_tree[:80]:
             if isinstance(item, dict):
                 paths.append(item.get("path", ""))
             else:
                 paths.append(str(item))
         file_tree_str = "\n".join(paths)
 
+    key_files_str = ""
+    if key_files:
+        parts = []
+        for path, content in key_files:
+            parts.append(f"=== {path} ===\n{content}")
+        key_files_str = "\n\n".join(parts)
+
     return (
         f"Repository README:\n{readme}\n\n"
-        f"Repository File Tree (first 200):\n{file_tree_str}\n\n"
-        f"Pre-rendered structure map:\n{repo_map_render[:30000]}\n\n"
-        "IMPORTANT: You MUST explore the codebase using tools before producing findings.\n"
-        "Do NOT just rely on the README or structure map above. You MUST:\n"
-        "1. Call get_structure_map first\n"
-        "2. Search for keywords relevant to each area using search_code\n"
-        "3. Read the actual source files (read_file) to verify implementation\n"
-        "4. Only then provide your final findings for all 8 areas\n\n"
+        f"Repository File Tree (first 80):\n{file_tree_str}\n\n"
+        f"Pre-rendered structure map:\n{repo_map_render[:8000]}\n\n"
+        f"Key source files (pre-loaded for your analysis):\n{key_files_str}\n\n"
+        "The key source files above are the most important files in this repository, ranked by PageRank.\n"
+        "You can use tools (search_code, read_file, list_symbols) to explore additional files if needed,\n"
+        "but the pre-loaded files should be sufficient for most of your analysis.\n\n"
+        "IMPORTANT: Base your findings on the actual source code provided above. Do NOT just rely on README.\n"
+        "1. Review the pre-loaded key files first\n"
+        "2. Use search_code only if you need to find something not in the pre-loaded files\n"
+        "3. Use read_file only for files NOT already pre-loaded above\n"
+        "4. Produce your final findings for all 8 areas\n\n"
+        "EFFICIENCY: Minimize tool calls. The pre-loaded files should cover most areas.\n"
         "Produce exactly 8 AreaFinding objects (one per area) and all EvidenceRef objects "
         "they reference. Also determine the agent_type for this repository.\n"
     )
@@ -171,10 +290,16 @@ def _build_fallback_evidence_refs(state: AnalysisState) -> list[dict]:
             val += 50
         if any(token in refs for token in ("mcp", "server", "tool", "agent", "sdk", "client", "api", "search", "context", "resolve")):
             val += 30
+        if any(token in lower for token in ("/mcp/", "/server", "src/server", "src/index", "src/main")):
+            val += 80
+        if any(token in refs for token in ("create", "handler", "route", "resolve-library-id", "tool handler")):
+            val += 25
         if lower.endswith(("package.json", "pyproject.toml", ".yml", ".yaml", "dockerfile")):
             val += 20
         if lower.endswith((".md", ".mdx")):
             val += 10
+        if "/cli/src/commands/" in lower:
+            val -= 40
             
         if "__tests__" in lower or lower.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx", "_test.py")):
             val -= 500
@@ -203,7 +328,7 @@ def _build_fallback_evidence_refs(state: AnalysisState) -> list[dict]:
             "content_excerpt": excerpt,
             "content_hash": None,
         })
-    return refs
+    return _hydrate_evidence_refs_from_source(local_repo_dir, refs)
 
 
 def _source_type_for_path(path: str, category: str) -> str:
@@ -245,7 +370,7 @@ def _fallback_description(path: str, data: dict, category: str) -> str:
 def _fallback_evidence_ids_by_area(evidence_refs: list[dict]) -> dict[str, list[str]]:
     keywords = {
         "project-purpose": ("readme", "package", "docs", "index"),
-        "execution-flow": ("server", "index", "cli", "main", "run"),
+        "execution-flow": ("server", "entry", "index", "main", "run", "handler", "cli"),
         "architecture-and-modules": ("src/", "packages/", "lib/", "index"),
         "agent-and-llm": ("agent", "mcp", "model", "prompt", "context"),
         "tools-and-integrations": ("tool", "api", "client", "sdk", "redis", "search", "resolve"),
@@ -260,10 +385,56 @@ def _fallback_evidence_ids_by_area(evidence_refs: list[dict]) -> dict[str, list[
             haystack = f"{ref.get('path', '')} {ref.get('description', '')}".lower()
             if any(term in haystack for term in terms):
                 refs.append(ref["id"])
+        refs.sort(key=lambda ref_id: _area_evidence_sort_key(area_id, _ref_by_id(evidence_refs, ref_id)))
         if not refs and evidence_refs:
             refs = [evidence_refs[0]["id"]]
         result[area_id] = refs
     return result
+
+
+def _ref_by_id(evidence_refs: list[dict], ref_id: str) -> dict:
+    for ref in evidence_refs:
+        if ref.get("id") == ref_id:
+            return ref
+    return {}
+
+
+def _area_evidence_sort_key(area_id: str, ref: dict) -> tuple[int, str]:
+    path = (ref.get("path") or "").lower()
+    description = (ref.get("description") or "").lower()
+    haystack = f"{path} {description}"
+    score = 0
+
+    if area_id == "project-purpose":
+        if path.endswith(("readme.md", "package.json")) or "docs/" in path:
+            score += 80
+    elif area_id == "execution-flow":
+        if any(token in path for token in ("src/server", "/server", "src/index", "src/main")):
+            score += 120
+        if any(token in haystack for token in ("create", "handler", "route", "run")):
+            score += 40
+        if "/cli/src/commands/" in path:
+            score -= 50
+    elif area_id == "architecture-and-modules":
+        if any(token in path for token in ("packages/", "src/", "lib/")):
+            score += 80
+    elif area_id == "agent-and-llm":
+        if any(token in haystack for token in ("agent", "mcp", "model", "prompt", "context")):
+            score += 100
+    elif area_id == "tools-and-integrations":
+        if any(token in haystack for token in ("tool", "api", "client", "sdk", "search", "resolve")):
+            score += 100
+    elif area_id == "state-and-storage":
+        if any(token in haystack for token in ("redis", "cache", "store", "db", "state")):
+            score += 100
+    elif area_id == "configuration-and-deployment":
+        if path.endswith(("package.json", "pyproject.toml", ".yml", ".yaml", "dockerfile")):
+            score += 100
+    elif area_id == "examples-and-tests":
+        if any(token in path for token in ("test", "example", "docs/", "readme")):
+            score += 100
+
+    return (-score, path)
 
 
 def _infer_fallback_agent_type(state: AnalysisState, evidence_refs: list[dict]) -> str:
@@ -316,6 +487,42 @@ def _build_evidence_signals(evidence_refs: list[dict]) -> list[dict]:
     return signals
 
 
+def _invoke_agent_with_retry(agent, messages, *, config, log, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            return agent.invoke(messages, config=config)
+        except Exception as exc:
+            exc_str = str(exc).lower()
+            if ("rate_limit" in exc_str or "429" in exc_str) and attempt < max_retries - 1:
+                wait_time = 20 * (attempt + 1)
+                log.warning(
+                    f"Rate limit hit, waiting {wait_time}s before retry {attempt + 1}/{max_retries}",
+                    error=str(exc)[:300],
+                )
+                time.sleep(wait_time)
+                continue
+            raise
+    raise RuntimeError("Max retries exceeded")
+
+
+def _invoke_structured_with_retry(fn, prompt_value, *, log, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            return fn(prompt_value)
+        except Exception as exc:
+            exc_str = str(exc).lower()
+            if ("rate_limit" in exc_str or "429" in exc_str) and attempt < max_retries - 1:
+                wait_time = 20 * (attempt + 1)
+                log.warning(
+                    f"Rate limit hit, waiting {wait_time}s before retry {attempt + 1}/{max_retries}",
+                    error=str(exc)[:300],
+                )
+                time.sleep(wait_time)
+                continue
+            raise
+    raise RuntimeError("Max retries exceeded")
+
+
 def area_explorer(state: AnalysisState) -> AnalysisState:
     _t = time.perf_counter()
     run_id = state.get("run_id", "-")
@@ -350,42 +557,76 @@ def area_explorer(state: AnalysisState) -> AnalysisState:
     file_catalog = state.get("file_catalog", []) or []
 
     try:
-        from langchain.agents import create_agent
-
         model = build_openai_analysis_model()
-        tools = create_react_tools(local_repo_dir, repo_map, file_catalog)
+        key_files = _select_key_files(state)
 
         system_prompt = _build_system_prompt()
         user_prompt = _build_user_prompt(state)
 
-        agent = create_agent(
-            model=model,
-            tools=tools,
-            system_prompt=system_prompt,
-            response_format=AreaExplorationResult,
-        )
+        if len(key_files) >= 5:
+            log.info("단일 structured output 호출 (key_files=%d)", len(key_files))
+            structured_model = model.with_structured_output(AreaExplorationResult)
 
-        result = agent.invoke(
-            {"messages": [{"role": "user", "content": user_prompt}]},
-            config={"recursion_limit": 30},
-        )
+            from langchain_core.prompts import ChatPromptTemplate
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", "{content}"),
+            ])
+            prompt_value = prompt.invoke({"content": user_prompt})
 
-        structured_response = result.get("structured_response")
-        if structured_response is None:
-            log.warning("structured_response 없음, mock fallback")
-            mock = _build_mock_result(state)
-            log.info(
-                "완료(mock-fallback)",
-                area_findings=len(mock["area_findings"]),
-                duration_ms=int((time.perf_counter() - _t) * 1000),
+            structured_response = _invoke_structured_with_retry(
+                structured_model.invoke,
+                prompt_value,
+                log=log,
             )
-            return mock
+        else:
+            log.info("ReAct 에이전트 호출 (key_files=%d, 부족하여 도구 탐색 필요)", len(key_files))
+            from langchain.agents import create_agent
+
+            tools = create_react_tools(local_repo_dir, repo_map, file_catalog)
+            agent = create_agent(
+                model=model,
+                tools=tools,
+                system_prompt=system_prompt,
+                response_format=AreaExplorationResult,
+            )
+
+            result = _invoke_agent_with_retry(
+                agent,
+                {"messages": [{"role": "user", "content": user_prompt}]},
+                config={"recursion_limit": 40},
+                log=log,
+            )
+
+            structured_response = result.get("structured_response")
+            if structured_response is None:
+                messages = result.get("messages", [])
+                last_msg_type = type(messages[-1]).__name__ if messages else "none"
+                last_msg_content = ""
+                if messages:
+                    last = messages[-1]
+                    content = getattr(last, "content", None) or (last.get("content") if isinstance(last, dict) else "")
+                    last_msg_content = str(content)[:500] if content else ""
+                log.warning(
+                    "structured_response 없음, mock fallback",
+                    last_msg_type=last_msg_type,
+                    last_msg_content=last_msg_content,
+                    message_count=len(messages),
+                )
+                mock = _build_mock_result(state)
+                log.info(
+                    "완료(mock-fallback)",
+                    area_findings=len(mock["area_findings"]),
+                    duration_ms=int((time.perf_counter() - _t) * 1000),
+                )
+                return mock
 
         area_findings = [af.model_dump() for af in structured_response.area_findings]
         evidence_refs = [
             _sanitize_ref(er.model_dump()) if hasattr(er, "model_dump") else _sanitize_ref(er)
             for er in structured_response.evidence_refs
         ]
+        evidence_refs = _hydrate_evidence_refs_from_source(local_repo_dir, evidence_refs)
         agent_type = structured_response.agent_type or "Unknown"
         tech_stack = None
         if structured_response.tech_stack_summary:
@@ -459,7 +700,11 @@ def area_explorer(state: AnalysisState) -> AnalysisState:
         }
 
     except Exception as exc:
-        log.warning(f"area_explorer failed, falling back to mock: {exc}")
+        import traceback
+        log.error(
+            f"area_explorer failed, falling back to mock: {exc}",
+            traceback=traceback.format_exc()[:2000],
+        )
         result = _build_mock_result(state)
         log.info(
             "완료(mock-error)",
@@ -480,6 +725,58 @@ def _sanitize_ref(ref: dict) -> dict:
         ref["line_start"] = end
         ref["line_end"] = start
     return ref
+
+
+def _hydrate_evidence_refs_from_source(
+    local_repo_dir: Path | None,
+    evidence_refs: list[dict],
+) -> list[dict]:
+    if not local_repo_dir:
+        return evidence_refs
+
+    base_dir = local_repo_dir.resolve()
+    hydrated: list[dict] = []
+    for ref in evidence_refs:
+        next_ref = dict(ref)
+        path_value = next_ref.get("path")
+        if not path_value or path_value == "unknown":
+            hydrated.append(next_ref)
+            continue
+
+        try:
+            source_path = (base_dir / str(path_value)).resolve()
+            if not source_path.is_relative_to(base_dir) or not source_path.is_file():
+                hydrated.append(next_ref)
+                continue
+
+            content = source_path.read_text(encoding="utf-8", errors="replace")
+            lines = content.splitlines()
+            if not lines:
+                hydrated.append(next_ref)
+                continue
+
+            if not next_ref.get("content_hash"):
+                next_ref["content_hash"] = f"sha256:{hashlib.sha256(content.encode('utf-8')).hexdigest()}"
+
+            start = next_ref.get("line_start")
+            end = next_ref.get("line_end")
+            if not isinstance(start, int) or start < 1:
+                start = 1
+            if start > len(lines):
+                start = 1
+            if not isinstance(end, int) or end < start:
+                end = min(len(lines), start + 19)
+            end = min(end, len(lines))
+
+            if not next_ref.get("content_excerpt"):
+                next_ref["content_excerpt"] = "\n".join(lines[start - 1:end])
+            next_ref["line_start"] = start
+            next_ref["line_end"] = end
+        except OSError:
+            pass
+        hydrated.append(next_ref)
+
+    return hydrated
 
 
 def _infer_signal_type(file_path: str) -> str:
