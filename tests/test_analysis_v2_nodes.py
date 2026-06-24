@@ -445,25 +445,28 @@ def test_validate_mermaid_syntax():
     assert validate_mermaid_syntax("   \n  \n") is False
 
 
+# ─── test_finalize_analysis_with_llm_success (rewrite) ────────────────────────────
+
 def test_finalize_analysis_with_llm_success(monkeypatch):
-    from agenttrace.agents.analysis.nodes.finalize_analysis import BatchAnalysisResult, ReportSynthesisResult
-    from agenttrace.agents.analysis.schemas.result import ReportSection, AreaFinding
-    
+    """synthesis가 ReportBodyResult, Mermaid가 MermaidResult로 분리 동작."""
+    import agenttrace.agents.analysis.nodes.finalize_analysis as fa_module
+    from agenttrace.agents.analysis.nodes.finalize_analysis import (
+        BatchAnalysisResult, ReportBodyResult, ReportBodySection, MermaidResult,
+    )
+    from agenttrace.agents.analysis.schemas.result import AreaFinding
+
     class FakeBatchModel:
         def invoke(self, prompt_value):
             return BatchAnalysisResult(
                 area_findings=[
                     AreaFinding(
-                        area_id=area_id,
-                        area_name=area_name,
-                        status="confirmed",
-                        summary="요약",
-                        findings=[]
+                        area_id=area_id, area_name=area_name,
+                        status="confirmed", summary="요약", findings=[]
                     )
                     for area_id, area_name in [
                         ("project-purpose", "프로젝트 목적과 주요 기능"),
                         ("execution-flow", "진입점과 핵심 실행 흐름"),
-                        ("architecture-and-modules", "아키텍처와 모듈 관계"),
+                        ("architecture-and-modules", "아키텔쳐와 모듈 관계"),
                         ("agent-and-llm", "Agent·LLM 핵심 로직"),
                         ("tools-and-integrations", "Tool·외부 서비스 연동"),
                         ("state-and-storage", "상태·메모리·데이터 저장"),
@@ -474,277 +477,257 @@ def test_finalize_analysis_with_llm_success(monkeypatch):
                 evidence_refs=[]
             )
 
-    class FakeReportModel:
-        def __init__(self):
-            self.invocations = []
-
+    class FakeBodyModel:
         def invoke(self, prompt_value):
-            self.invocations.append(prompt_value)
-            
-            sections = []
-            for idx in range(1, 12):
-                sections.append(ReportSection(
-                    section_id=idx,
-                    section_name=f"섹션 {idx}",
-                    status="confirmed",
-                    title=f"{idx}. 섹션 {idx}",
+            return ReportBodyResult(report_sections=[
+                ReportBodySection(
+                    section_id=idx, section_name=f"섭션 {idx}",
+                    status="confirmed", title=f"{idx}. 섭션 {idx}",
                     body_markdown=f"내용 {idx}",
-                    mermaid_diagram="flowchart TD\n  A --> B" if idx in [4, 5] else None
-                ))
-            return ReportSynthesisResult(report_sections=sections)
+                )
+                for idx in range(1, 12)
+            ])
 
-    fake_report_model = FakeReportModel()
-    fake_batch_model = FakeBatchModel()
-    
+    class FakeMermaidModel:
+        def invoke(self, prompt_value):
+            return MermaidResult(mermaid_code="flowchart TD\n  A --> B")
+
     class FakeModel:
         def with_structured_output(self, schema):
             if schema == BatchAnalysisResult:
-                return fake_batch_model
-            return fake_report_model
+                return FakeBatchModel()
+            if schema == ReportBodyResult:
+                return FakeBodyModel()
+            if schema == MermaidResult:
+                return FakeMermaidModel()
+            raise ValueError(f"Unknown schema: {schema}")
 
-    monkeypatch.setattr(
-        "agenttrace.agents.analysis.nodes.finalize_analysis.build_openai_analysis_model",
-        lambda: FakeModel()
-    )
-    
+    monkeypatch.setattr(fa_module, "build_openai_analysis_model", lambda: FakeModel())
+
     import agenttrace.config
     original_get_settings = agenttrace.config.get_settings
     def mocked_get_settings():
         settings = original_get_settings()
         from dataclasses import replace
         return replace(settings, openai_api_key="fake-key")
-    
     monkeypatch.setattr(agenttrace.config, "get_settings", mocked_get_settings)
-    monkeypatch.setattr("agenttrace.agents.analysis.nodes.finalize_analysis.get_settings", mocked_get_settings)
+    monkeypatch.setattr(fa_module, "get_settings", mocked_get_settings)
 
     from agenttrace.agents.analysis.nodes.finalize_analysis import finalize_analysis
-    
     state = {
         "readme": "Project Readme",
-        "synthesis": {
-            "analysis_status": "completed",
-            "agent_type": "Unknown",
-        },
-        "claims": [],
-        "evidence_signals": [],
-        "task_results": [],
+        "synthesis": {"analysis_status": "completed", "agent_type": "Unknown"},
+        "claims": [], "evidence_signals": [], "task_results": [],
         "risk_signals": [],
         "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
     }
-    
+
     result = finalize_analysis(state)
     report_sections = result["final_result"]["report_sections"]
-    
     assert len(report_sections) == 11
+    # 섭션 4·5에 Mermaid 생성됨
     assert report_sections[3]["mermaid_diagram"] == "flowchart TD\n  A --> B"
-    assert len(fake_report_model.invocations) == 1
+    assert report_sections[4]["mermaid_diagram"] == "flowchart TD\n  A --> B"
 
+
+# ─── test_finalize_analysis_with_llm_mermaid_retry (rewrite) ─────────────────────
 
 def test_finalize_analysis_with_llm_mermaid_retry(monkeypatch):
-    from agenttrace.agents.analysis.nodes.finalize_analysis import BatchAnalysisResult, ReportSynthesisResult
-    from agenttrace.agents.analysis.schemas.result import ReportSection, AreaFinding
-    
+    """Mermaid 1회 invalid → retry → valid 반환 경로."""
+    import agenttrace.agents.analysis.nodes.finalize_analysis as fa_module
+    from agenttrace.agents.analysis.nodes.finalize_analysis import (
+        BatchAnalysisResult, ReportBodyResult, ReportBodySection, MermaidResult,
+    )
+    from agenttrace.agents.analysis.schemas.result import AreaFinding
+
     class FakeBatchModel:
         def invoke(self, prompt_value):
             return BatchAnalysisResult(
                 area_findings=[
-                    AreaFinding(
-                        area_id=area_id,
-                        area_name=area_name,
-                        status="confirmed",
-                        summary="요약",
-                        findings=[]
-                    )
-                    for area_id, area_name in [
-                        ("project-purpose", "프로젝트 목적과 주요 기능"),
-                        ("execution-flow", "진입점과 핵심 실행 흐름"),
-                        ("architecture-and-modules", "아키텍처와 모듈 관계"),
-                        ("agent-and-llm", "Agent·LLM 핵심 로직"),
-                        ("tools-and-integrations", "Tool·외부 서비스 연동"),
-                        ("state-and-storage", "상태·메모리·데이터 저장"),
-                        ("configuration-and-deployment", "설정·실행·배포 방법"),
-                        ("examples-and-tests", "예제·테스트·확장 지점"),
-                    ]
+                    AreaFinding(area_id="execution-flow", area_name="진입점과 핵심 실행 흐름",
+                                status="confirmed", summary="요약", findings=[])
                 ],
                 evidence_refs=[]
             )
 
-    class FakeReportModel:
+    class FakeBodyModel:
+        def invoke(self, prompt_value):
+            return ReportBodyResult(report_sections=[
+                ReportBodySection(
+                    section_id=idx, section_name=f"섭션 {idx}",
+                    status="confirmed", title=f"{idx}. 섭션 {idx}",
+                    body_markdown=f"내용 {idx}",
+                )
+                for idx in range(1, 12)
+            ])
+
+    class FakeMermaidModel:
         def __init__(self):
             self.call_count = 0
-            self.invocations = []
 
         def invoke(self, prompt_value):
             self.call_count += 1
-            self.invocations.append(prompt_value)
-            
+            # 첫 호출: invalid syntax (괄호 불일치)
             if self.call_count == 1:
-                sections = []
-                for idx in range(1, 12):
-                    sections.append(ReportSection(
-                        section_id=idx,
-                        section_name=f"섹션 {idx}",
-                        status="confirmed",
-                        title=f"{idx}. 섹션 {idx}",
-                        body_markdown=f"내용 {idx}",
-                        mermaid_diagram="flowchart TD\n  A[Start) --> B" if idx == 4 else None
-                    ))
-                return ReportSynthesisResult(report_sections=sections)
-            else:
-                sections = []
-                for idx in range(1, 12):
-                    sections.append(ReportSection(
-                        section_id=idx,
-                        section_name=f"섹션 {idx}",
-                        status="confirmed",
-                        title=f"{idx}. 섹션 {idx}",
-                        body_markdown=f"내용 {idx}",
-                        mermaid_diagram="flowchart TD\n  A --> B" if idx == 4 else None
-                    ))
-                return ReportSynthesisResult(report_sections=sections)
+                return MermaidResult(mermaid_code="flowchart TD\n  A[Start) --> B")
+            # retry: valid
+            return MermaidResult(mermaid_code="flowchart TD\n  A --> B")
 
-    fake_report_model = FakeReportModel()
-    fake_batch_model = FakeBatchModel()
-    
+    fake_mermaid = FakeMermaidModel()
+
     class FakeModel:
         def with_structured_output(self, schema):
             if schema == BatchAnalysisResult:
-                return fake_batch_model
-            return fake_report_model
+                return FakeBatchModel()
+            if schema == ReportBodyResult:
+                return FakeBodyModel()
+            if schema == MermaidResult:
+                return fake_mermaid
+            raise ValueError(f"Unknown schema: {schema}")
 
-    monkeypatch.setattr(
-        "agenttrace.agents.analysis.nodes.finalize_analysis.build_openai_analysis_model",
-        lambda: FakeModel()
-    )
-    
+    monkeypatch.setattr(fa_module, "build_openai_analysis_model", lambda: FakeModel())
+
     import agenttrace.config
     original_get_settings = agenttrace.config.get_settings
     def mocked_get_settings():
         settings = original_get_settings()
         from dataclasses import replace
         return replace(settings, openai_api_key="fake-key")
-    
     monkeypatch.setattr(agenttrace.config, "get_settings", mocked_get_settings)
-    monkeypatch.setattr("agenttrace.agents.analysis.nodes.finalize_analysis.get_settings", mocked_get_settings)
+    monkeypatch.setattr(fa_module, "get_settings", mocked_get_settings)
 
     from agenttrace.agents.analysis.nodes.finalize_analysis import finalize_analysis
-    
     state = {
         "readme": "Project Readme",
-        "synthesis": {
-            "analysis_status": "completed",
-            "agent_type": "Unknown",
-        },
-        "claims": [],
-        "evidence_signals": [],
-        "task_results": [],
+        "synthesis": {"analysis_status": "completed", "agent_type": "Unknown"},
+        "claims": [], "evidence_signals": [], "task_results": [],
         "risk_signals": [],
         "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
     }
-    
+
     result = finalize_analysis(state)
     report_sections = result["final_result"]["report_sections"]
-    
     assert len(report_sections) == 11
-    assert fake_report_model.call_count == 2
+    # 섭션 4: retry 후 valid Mermaid 반환
     assert report_sections[3]["mermaid_diagram"] == "flowchart TD\n  A --> B"
+    # _generate_mermaid_for_section이 섭션 4·5 각각 최대 2회 호출 가능
+    assert fake_mermaid.call_count >= 2
 
+
+# ─── test_finalize_analysis_with_llm_mermaid_fail_after_retry (rewrite) ──────────
 
 def test_finalize_analysis_with_llm_mermaid_fail_after_retry(monkeypatch):
-    from agenttrace.agents.analysis.nodes.finalize_analysis import BatchAnalysisResult, ReportSynthesisResult
-    from agenttrace.agents.analysis.schemas.result import ReportSection, AreaFinding
-    
+    """Mermaid 2회 모두 invalid → None 반환 (섭션에서 mermaid_diagram=None)."""
+    import agenttrace.agents.analysis.nodes.finalize_analysis as fa_module
+    from agenttrace.agents.analysis.nodes.finalize_analysis import (
+        BatchAnalysisResult, ReportBodyResult, ReportBodySection, MermaidResult,
+    )
+    from agenttrace.agents.analysis.schemas.result import AreaFinding
+
     class FakeBatchModel:
         def invoke(self, prompt_value):
             return BatchAnalysisResult(
                 area_findings=[
-                    AreaFinding(
-                        area_id=area_id,
-                        area_name=area_name,
-                        status="confirmed",
-                        summary="요약",
-                        findings=[]
-                    )
-                    for area_id, area_name in [
-                        ("project-purpose", "프로젝트 목적과 주요 기능"),
-                        ("execution-flow", "진입점과 핵심 실행 흐름"),
-                        ("architecture-and-modules", "아키텍처와 모듈 관계"),
-                        ("agent-and-llm", "Agent·LLM 핵심 로직"),
-                        ("tools-and-integrations", "Tool·외부 서비스 연동"),
-                        ("state-and-storage", "상태·메모리·데이터 저장"),
-                        ("configuration-and-deployment", "설정·실행·배포 방법"),
-                        ("examples-and-tests", "예제·테스트·확장 지점"),
-                    ]
+                    AreaFinding(area_id="execution-flow", area_name="진입점",
+                                status="confirmed", summary="요약", findings=[])
                 ],
                 evidence_refs=[]
             )
 
-    class FakeReportModel:
-        def __init__(self):
-            self.call_count = 0
-            self.invocations = []
-
+    class FakeBodyModel:
         def invoke(self, prompt_value):
-            self.call_count += 1
-            self.invocations.append(prompt_value)
-            
-            sections = []
-            for idx in range(1, 12):
-                sections.append(ReportSection(
-                    section_id=idx,
-                    section_name=f"섹션 {idx}",
-                    status="confirmed",
-                    title=f"{idx}. 섹션 {idx}",
+            return ReportBodyResult(report_sections=[
+                ReportBodySection(
+                    section_id=idx, section_name=f"섭션 {idx}",
+                    status="confirmed", title=f"{idx}. 섭션 {idx}",
                     body_markdown=f"내용 {idx}",
-                    mermaid_diagram="flowchart TD\n  A[Start) --> B" if idx == 4 else None
-                ))
-            return ReportSynthesisResult(report_sections=sections)
+                )
+                for idx in range(1, 12)
+            ])
 
-    fake_report_model = FakeReportModel()
-    fake_batch_model = FakeBatchModel()
-    
+    class FakeMermaidModel:
+        def invoke(self, prompt_value):
+            # 항상 invalid syntax 반환
+            return MermaidResult(mermaid_code="flowchart TD\n  A[Start) --> B")
+
     class FakeModel:
         def with_structured_output(self, schema):
             if schema == BatchAnalysisResult:
-                return fake_batch_model
-            return fake_report_model
+                return FakeBatchModel()
+            if schema == ReportBodyResult:
+                return FakeBodyModel()
+            if schema == MermaidResult:
+                return FakeMermaidModel()
+            raise ValueError(f"Unknown schema: {schema}")
 
-    monkeypatch.setattr(
-        "agenttrace.agents.analysis.nodes.finalize_analysis.build_openai_analysis_model",
-        lambda: FakeModel()
-    )
-    
+    monkeypatch.setattr(fa_module, "build_openai_analysis_model", lambda: FakeModel())
+
     import agenttrace.config
     original_get_settings = agenttrace.config.get_settings
     def mocked_get_settings():
         settings = original_get_settings()
         from dataclasses import replace
         return replace(settings, openai_api_key="fake-key")
-    
     monkeypatch.setattr(agenttrace.config, "get_settings", mocked_get_settings)
-    monkeypatch.setattr("agenttrace.agents.analysis.nodes.finalize_analysis.get_settings", mocked_get_settings)
+    monkeypatch.setattr(fa_module, "get_settings", mocked_get_settings)
 
     from agenttrace.agents.analysis.nodes.finalize_analysis import finalize_analysis
-    
     state = {
         "readme": "Project Readme",
-        "synthesis": {
-            "analysis_status": "completed",
-            "agent_type": "Unknown",
-        },
-        "claims": [],
-        "evidence_signals": [],
-        "task_results": [],
+        "synthesis": {"analysis_status": "completed", "agent_type": "Unknown"},
+        "claims": [], "evidence_signals": [], "task_results": [],
         "risk_signals": [],
         "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
     }
-    
+
     result = finalize_analysis(state)
     report_sections = result["final_result"]["report_sections"]
-    
     assert len(report_sections) == 11
-    assert fake_report_model.call_count == 2
+    # Mermaid 2회 실패 → None
     assert report_sections[3]["mermaid_diagram"] is None
+
+
+from agenttrace.agents.analysis.nodes.finalize_analysis import _generate_mermaid_for_section
+
+def test_generate_mermaid_for_section_returns_valid_diagram(monkeypatch):
+    """첫 호출에서 valid diagram 반환."""
+    import agenttrace.agents.analysis.nodes.finalize_analysis as fa_module
+    from agenttrace.agents.analysis.nodes.finalize_analysis import MermaidResult
+    from unittest.mock import MagicMock
+
+    mock_model = MagicMock()
+    mock_model.with_structured_output.return_value = mock_model
+    mock_model.invoke.return_value = MermaidResult(
+        mermaid_code="flowchart TD\n  A[Input] --> B[Output]"
+    )
+    monkeypatch.setattr(fa_module, "build_openai_analysis_model", lambda: mock_model)
+
+    result = _generate_mermaid_for_section(
+        section_id=4, section_name="전체 동작 방식",
+        readme="# Test Repo", area_summary="흐름 요약"
+    )
+    assert result == "flowchart TD\n  A[Input] --> B[Output]"
+    assert mock_model.invoke.call_count == 1  # retry 불필요
+
+
+def test_generate_mermaid_for_section_returns_none_on_failure(monkeypatch):
+    """예외 발생 시 None 반환 (graceful fallback)."""
+    import agenttrace.agents.analysis.nodes.finalize_analysis as fa_module
+    from unittest.mock import MagicMock
+
+    mock_model = MagicMock()
+    mock_model.with_structured_output.return_value = mock_model
+    mock_model.invoke.side_effect = RuntimeError("API error")
+    monkeypatch.setattr(fa_module, "build_openai_analysis_model", lambda: mock_model)
+
+    result = _generate_mermaid_for_section(
+        section_id=4, section_name="전체 동작 방식",
+        readme="# Test", area_summary=""
+    )
+    assert result is None
+
+
+
 
 
 from agenttrace.agents.analysis.nodes.finalize_analysis import _build_area_findings
