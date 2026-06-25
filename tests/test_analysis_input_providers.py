@@ -86,37 +86,44 @@ def test_critical_config_whitelist():
     assert _is_critical_config("docs/guide.md") is False
 
 
-def test_select_blobs_guarantees_critical_configs():
-    """파일 수가 MAX_FILES를 초과해도 중요 설정 파일은 항상 포함된다."""
-    from agenttrace.agents.analysis.github_provider import MAX_FILES, _select_blobs
+def test_filter_blobs_preserves_all_files_and_tags_critical_configs():
+    """MAX_FILES 제한 없이 전체 파일을 유지하며 critical_config 태깅만 수행한다."""
+    from agenttrace.agents.analysis.github_provider import _filter_blobs
 
-    # MAX_FILES개의 일반 소스 파일 + 설정 파일 여러 개
-    blobs = [{"path": f"src/module_{i}.py", "size": 100} for i in range(MAX_FILES)]
+    # 300개 초과의 일반 소스 파일 + 설정 파일 여러 개
+    blobs = [{"path": f"src/module_{i}.py", "size": 100} for i in range(350)]
     blobs += [
         {"path": "pyproject.toml", "size": 200},
         {"path": "Dockerfile", "size": 300},
         {"path": ".github/workflows/ci.yml", "size": 400},
     ]
 
-    selected = _select_blobs(blobs)
+    filtered = _filter_blobs(blobs)
 
-    selected_paths = {b["path"] for b in selected}
-    assert len(selected) <= MAX_FILES
-    assert "pyproject.toml" in selected_paths
-    assert "Dockerfile" in selected_paths
-    assert ".github/workflows/ci.yml" in selected_paths
+    # 전체 파일이 유지됨 (MAX_FILES 제한 제거)
+    assert len(filtered) == 353
+    # critical_config 태깅 확인
+    critical = {b["path"] for b in filtered if b.get("is_critical_config")}
+    assert "pyproject.toml" in critical
+    assert "Dockerfile" in critical
+    assert ".github/workflows/ci.yml" in critical
+    # 일반 소스 파일은 critical_config가 아님
+    assert "src/module_0.py" not in critical
 
 
-def test_select_blobs_no_truncation_when_under_limit():
-    """파일 수가 MAX_FILES 이하이면 전부 포함된다."""
-    from agenttrace.agents.analysis.github_provider import _select_blobs
+def test_filter_blobs_tags_all_correctly():
+    """적은 수의 파일도 올바르게 태깅된다."""
+    from agenttrace.agents.analysis.github_provider import _filter_blobs
 
     blobs = [
         {"path": "src/a.py", "size": 100},
         {"path": "README.md", "size": 50},
         {"path": "pyproject.toml", "size": 80},
     ]
-    selected = _select_blobs(blobs)
-    assert len(selected) == 3
+    filtered = _filter_blobs(blobs)
+    assert len(filtered) == 3
+    assert filtered[0].get("is_critical_config") is False
+    assert filtered[1].get("is_critical_config") is False
+    assert filtered[2].get("is_critical_config") is True
 
 

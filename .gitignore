@@ -7,6 +7,7 @@ __pycache__/
 .worktrees/
 out/*.json
 out/*.log
+out/*.md
 !out/.gitkeep
 docs/reference/
 tmp/
@@ -15,5 +16,6 @@ data/context7_snapshot.json
 # Local agents configuration and runtime artifacts
 .langgraph_api/
 .agents/
+.opencode/
 
 

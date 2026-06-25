@@ -5,6 +5,7 @@ import time
 from pydantic import ValidationError
 
 from agenttrace.agents.analysis.schemas.result import AnalysisResult
+from agenttrace.agents.analysis.source_inventory import SourceInventory
 from agenttrace.agents.analysis.state import AnalysisState
 from agenttrace.logging_config import get_logger
 
@@ -36,42 +37,10 @@ def quality_gate(state: AnalysisState) -> AnalysisState:
             "quality_errors": ["AnalysisResult schema invalid"],
         }
 
-    claim_ids = {claim.claim_id for claim in result.analysis_claims}
-    evidence_ids = {signal.signal_id for signal in result.evidence_signals}
-    task_ids = {task.get("task_id") for task in state.get("analysis_plan", {}).get("tasks", [])}
-
-    for task_result in result.evidence_task_results:
-        if task_ids and task_result.task_id not in task_ids:
-            critical_errors.append(f"Unknown task_id referenced: {task_result.task_id}")
-        for signal_id in task_result.evidence_signal_ids:
-            if signal_id not in evidence_ids:
-                critical_errors.append(f"Unknown evidence_signal_id referenced: {signal_id}")
-        for verdict in task_result.claim_verdicts:
-            if verdict.claim_id not in claim_ids:
-                critical_errors.append(f"Unknown claim_id referenced: {verdict.claim_id}")
-            for signal_id in verdict.evidence_signal_ids:
-                if signal_id not in evidence_ids:
-                    critical_errors.append(f"Unknown evidence_signal_id referenced: {signal_id}")
-
-    required_ids = {
-        task.get("task_id")
-        for task in state.get("analysis_plan", {}).get("tasks", [])
-        if task.get("required")
-    }
-    result_by_task = {task.task_id: task for task in result.evidence_task_results}
-    missing_required = required_ids - set(result_by_task)
-    if missing_required:
-        critical_errors.append(f"Missing required task results: {', '.join(sorted(missing_required))}")
-
-    insufficient_required = [
-        task_id for task_id in required_ids
-        if result_by_task.get(task_id) and result_by_task[task_id].status == "INSUFFICIENT_EVIDENCE"
-    ]
-    if insufficient_required and result.analysis_status == "completed":
-        critical_errors.append("completed status conflicts with insufficient required task")
-
     if result.analysis_status in {"completed_with_limitations", "insufficient_evidence", "uncertain_classification"}:
         warnings.extend(result.analysis_limitations.notes)
+
+    critical_errors.extend(_validate_confirmed_evidence(state, result))
 
     log.info("완료", errors=len(critical_errors), warnings=len(warnings), duration_ms=int((time.perf_counter() - _t) * 1000))
     return {
@@ -84,3 +53,30 @@ def quality_gate(state: AnalysisState) -> AnalysisState:
         "status": "NEEDS_HUMAN_REVIEW" if critical_errors else state.get("status", "COLLECTED"),
     }
 
+
+def _validate_confirmed_evidence(state: AnalysisState, result: AnalysisResult) -> list[str]:
+    errors: list[str] = []
+    refs_by_id = {ref.id: ref.model_dump() for ref in result.evidence_refs}
+    inventory = SourceInventory.from_state(state)
+
+    confirmed_ref_ids: set[str] = set()
+    for area in result.area_findings:
+        if area.status != "confirmed":
+            continue
+        for finding in area.findings:
+            confirmed_ref_ids.update(finding.evidence_refs)
+
+    for ref_id in sorted(confirmed_ref_ids):
+        ref = refs_by_id.get(ref_id)
+        if ref is None:
+            errors.append(f"confirmed finding references unknown evidence ref: {ref_id}")
+            continue
+
+        for field in ("content_excerpt", "content_hash", "line_start", "line_end"):
+            if ref.get(field) in (None, ""):
+                errors.append(f"confirmed evidence ref missing {field}")
+
+        if inventory.records and ref.get("path") in inventory.records:
+            errors.extend(inventory.validate_evidence_ref(ref))
+
+    return errors

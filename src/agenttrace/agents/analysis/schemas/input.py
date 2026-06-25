@@ -75,3 +75,4 @@ class AssembledAnalysisInput(BaseModel):
     analysis_mode: str
     missing_inputs: list[str] = Field(default_factory=list)
     input_manifest: dict[str, Any] = Field(default_factory=dict)
+    deferred_file_paths: list[str] = Field(default_factory=list)

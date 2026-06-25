@@ -14,6 +14,42 @@ REQUIRED_KEYWORDS = {
     "benchmark", "framework", "workflow", "plugin",
 }
 
+CLAIM_AREA_MAP: dict[str, str] = {
+    "mcp": "agent-and-llm",
+    "model context protocol": "agent-and-llm",
+    "agent": "agent-and-llm",
+    "prompt": "agent-and-llm",
+    "tool": "tools-and-integrations",
+    "skill": "agent-and-llm",
+    "eval": "examples-and-tests",
+    "benchmark": "examples-and-tests",
+    "docker": "configuration-and-deployment",
+    "kubernetes": "configuration-and-deployment",
+    "deploy": "configuration-and-deployment",
+    "workflow": "configuration-and-deployment",
+    "database": "state-and-storage",
+    "storage": "state-and-storage",
+    "cache": "state-and-storage",
+    "memory": "state-and-storage",
+    "api": "tools-and-integrations",
+    "integration": "tools-and-integrations",
+    "service": "architecture-and-modules",
+    "module": "architecture-and-modules",
+    "entry": "execution-flow",
+    "cli": "execution-flow",
+    "server": "execution-flow",
+    "main": "execution-flow",
+}
+
+
+def _infer_area_id(claim_text: str) -> str:
+    """claim 텍스트에서 키워드 매칭으로 area_id 추론."""
+    lower = claim_text.lower()
+    for keyword, area_id in CLAIM_AREA_MAP.items():
+        if keyword in lower:
+            return area_id
+    return "project-purpose"
+
 
 def _claim_tokens(claim_text: str) -> set[str]:
     return {
@@ -102,6 +138,7 @@ def analysis_planner(state: AnalysisState) -> AnalysisState:
         tasks.append({
             "task_id": "task-001",
             "claims": [claim["claim_id"] for claim in required_claims],
+            "area_id": _infer_area_id(" ".join(c["claim_text"] for c in required_claims)),
             "target_paths": _build_target_paths(required_claims),
             "required": True,
             "status": "PENDING",
@@ -111,6 +148,7 @@ def analysis_planner(state: AnalysisState) -> AnalysisState:
         tasks.append({
             "task_id": f"task-{len(tasks) + 1:03d}",
             "claims": [claim["claim_id"] for claim in optional_claims],
+            "area_id": _infer_area_id(" ".join(c["claim_text"] for c in optional_claims)),
             "target_paths": _build_target_paths(optional_claims),
             "required": False,
             "status": "PENDING",

@@ -59,6 +59,19 @@ def main():
         print(f"Section 4 Mermaid generated: {has_sec4_mermaid}")
         print(f"Section 5 Mermaid generated: {has_sec5_mermaid}")
         
+        # Save output for review
+        os.makedirs("out", exist_ok=True)
+        out_path = "out/context7_report.md"
+        with open(out_path, "w", encoding="utf-8") as out:
+            out.write("# AgentTrace Analysis Report (Smoke Test)\n\n")
+            for sec in sections:
+                out.write(f"## {sec.get('title')}\n\n")
+                if sec.get('mermaid_diagram'):
+                    out.write(f"```mermaid\n{sec.get('mermaid_diagram')}\n```\n\n")
+                out.write(f"{sec.get('body_markdown')}\n\n")
+        
+        print(f"Report saved to {out_path}")
+        
     except Exception as e:
         print(f"Error during execution: {e}")
         import traceback

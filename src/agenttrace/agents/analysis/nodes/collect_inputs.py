@@ -84,6 +84,14 @@ def collect_inputs(state: AnalysisState) -> AnalysisState:
         s_dict["content"] = ""
         state_source_files.append(s_dict)
 
+    file_tree_paths = list(request.file_tree)
+    if not file_tree_paths:
+        seen_paths: set[str] = set()
+        for source in assembled.source_files:
+            if source.path and source.path not in seen_paths:
+                seen_paths.add(source.path)
+                file_tree_paths.append(source.path)
+
     log.info(
         "완료",
         source_files=len(assembled.source_files),
@@ -101,9 +109,10 @@ def collect_inputs(state: AnalysisState) -> AnalysisState:
         "metadata": request.repository.model_dump(),
         "repository_snapshot": request.snapshot.model_dump() if request.snapshot else {},
         "readme": request.readme_text or "",
-        "file_tree": [{"path": path} for path in request.file_tree],
+        "file_tree": [{"path": path} for path in file_tree_paths],
         "source_files": state_source_files,
         "selected_files": state_source_files,
+        "deferred_file_paths": assembled.deferred_file_paths,
         "missing_inputs": assembled.missing_inputs,
         "input_manifest": assembled.input_manifest,
         "analysis_mode": assembled.analysis_mode,

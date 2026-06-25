@@ -124,6 +124,17 @@ class PostgresChunkEmbeddingSql:
             RETURNING source_chunks.chunk_id
         """.strip()
 
+    @staticmethod
+    def search_similar() -> str:
+        return """
+            SELECT chunk_id, 1 - (embedding <=> %(query)s::vector) AS similarity
+            FROM source_chunks
+            WHERE snapshot_id = %(snapshot_id)s
+              AND embedding IS NOT NULL
+            ORDER BY embedding <=> %(query)s::vector
+            LIMIT %(top_k)s
+        """.strip()
+
 
 class PostgresChunkEmbeddingStore:
     def __init__(self, connection: SqlConnection) -> None:
@@ -134,3 +145,13 @@ class PostgresChunkEmbeddingStore:
             return []
         import json
         return self._connection.execute(PostgresChunkEmbeddingSql.update_embeddings(), {"rows": json.dumps(rows)})
+
+    def search_similar(
+        self, query_embedding: list[float], snapshot_id: str, top_k: int = 50
+    ) -> list[dict[str, Any]]:
+        """cosine distance 기반 유사 청크 검색. algorithm.md §22.3."""
+        import json
+        return self._connection.execute(
+            PostgresChunkEmbeddingSql.search_similar(),
+            {"query": json.dumps(query_embedding), "snapshot_id": snapshot_id, "top_k": top_k},
+        )

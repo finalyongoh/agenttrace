@@ -1,22 +1,24 @@
 from agenttrace.agents.analysis.nodes.analysis_precheck import analysis_precheck
-from agenttrace.agents.analysis.nodes.analysis_planner import analysis_planner
-from agenttrace.agents.analysis.nodes.claim_analyzer import claim_analyzer
-from agenttrace.agents.analysis.nodes.content_indexer import content_indexer
-from agenttrace.agents.analysis.nodes.chunk_embedder import chunk_embedder
-from agenttrace.agents.analysis.nodes.content_preprocessor import content_preprocessor
-from agenttrace.agents.analysis.nodes.evidence_evaluator import evidence_evaluator
-from agenttrace.agents.analysis.nodes.evidence_scout import evidence_scout
-from agenttrace.agents.analysis.nodes.finalize_task import finalize_task
+from agenttrace.agents.analysis.nodes.collect_inputs import collect_inputs
+from agenttrace.agents.analysis.nodes.legacy.analysis_planner import analysis_planner
+from agenttrace.agents.analysis.nodes.legacy.claim_analyzer import claim_analyzer
+from agenttrace.agents.analysis.nodes.legacy.content_indexer import content_indexer
+from agenttrace.agents.analysis.nodes.legacy.chunk_embedder import chunk_embedder
+from agenttrace.agents.analysis.nodes.legacy.content_preprocessor import content_preprocessor
+from agenttrace.agents.analysis.nodes.legacy.evidence_evaluator import evidence_evaluator
+from agenttrace.agents.analysis.nodes.legacy.evidence_scout import evidence_scout
+from agenttrace.agents.analysis.nodes.legacy.finalize_task import finalize_task
 from agenttrace.agents.analysis.nodes.persist_analysis import persist_analysis
 from agenttrace.agents.analysis.nodes.finalize_analysis import (
     finalize_analysis,
     validate_mermaid_syntax,
 )
 from agenttrace.agents.analysis.nodes.quality_gate import quality_gate
-from agenttrace.agents.analysis.nodes.repository_synthesizer import repository_synthesizer
-from agenttrace.agents.analysis.nodes.request_builder import request_builder
+from agenttrace.agents.analysis.schemas.result import COMMON_ANALYSIS_AREAS
+from agenttrace.agents.analysis.nodes.legacy.repository_synthesizer import repository_synthesizer
+from agenttrace.agents.analysis.nodes.legacy.request_builder import request_builder
 import pytest
-from agenttrace.agents.analysis.nodes.task_result_merge import task_result_merge
+from agenttrace.agents.analysis.nodes.legacy.task_result_merge import task_result_merge
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +44,37 @@ def test_content_preprocessor_builds_chunks_from_source_files():
 
     assert result["content_chunks"]
     assert result["chunk_index"]["entries"][0]["file_path"] == "src/server.py"
+
+
+def test_collect_inputs_derives_file_tree_from_source_files_when_request_tree_empty(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    state = {
+        "run_id": "00000000-0000-0000-0000-000000000101",
+        "analysis_request": {
+            "analysis_id": "00000000-0000-0000-0000-000000000101",
+            "repository": {
+                "full_name": "owner/repo",
+                "github_url": "https://github.com/owner/repo",
+            },
+            "snapshot": {"snapshot_id": "snap-1"},
+            "readme_text": "# Repo",
+            "file_tree": [],
+            "source_files": [
+                {"path": "README.md", "content": "# Repo\n"},
+                {"path": "src/server.ts", "content": "export function serve() {}\n"},
+                {"path": "package.json", "content": "{\"type\":\"module\"}\n"},
+            ],
+            "external_ingest": {"enabled": False, "provider": "gitingest"},
+        },
+    }
+
+    result = collect_inputs(state)
+
+    assert [item["path"] for item in result["file_tree"]] == [
+        "README.md",
+        "src/server.ts",
+        "package.json",
+    ]
 
 
 def test_content_preprocessor_prepares_index_and_embedding_metadata():
@@ -156,6 +189,26 @@ def test_analysis_precheck_allows_limited_readme_file_tree_analysis():
     assert "source_files" in result["analysis_limitations"]["missing_inputs"]
 
 
+def test_analysis_precheck_allows_repo_map_only_analysis():
+    state = {
+        "repo_map": {
+            "files": {
+                "src/server.ts": {
+                    "definitions": ["createServer"],
+                    "references": ["tool"],
+                }
+            }
+        },
+        "missing_inputs": [],
+    }
+
+    result = analysis_precheck(state)
+
+    assert result["precheck_result"]["can_analyze"] is True
+    assert result["precheck_result"]["has_repo_map"] is True
+    assert result["status"] == "COLLECTED"
+
+
 def test_claim_analyzer_extracts_readme_claims_without_summary_regeneration():
     result = claim_analyzer(
         {"readme": "# Repo\nProvides an MCP server.\nSupports tool registration."}
@@ -239,18 +292,8 @@ def test_evidence_task_loop_resolves_supported_claim():
     assert task_result["claim_verdicts"][0]["verdict"] in {"SUPPORTED", "PARTIALLY_SUPPORTED"}
 
 
-def test_evidence_scout_prefers_repo_map_ranked_chunks_and_caps_results():
-    chunks = {
-        f"chunk-{i:02d}": {
-            "chunk_id": f"chunk-{i:02d}",
-            "file_path": "src/core.ts" if i == 24 else f"src/other_{i}.ts",
-            "content": "export function createContextTool() { return prompt; }" if i == 24 else "export const value = 1;",
-            "content_hash": f"h{i}",
-            "line_start": 1,
-            "line_end": 2,
-        }
-        for i in range(25)
-    }
+def test_evidence_scout_generates_structure_map_for_react_mode():
+    """ReAct 모드: evidence_scout가 구조 지도를 생성하고 selected_chunks는 빈 리스트."""
     state = {
         "run_id": "run-1",
         "current_task_id": "task-1",
@@ -266,19 +309,24 @@ def test_evidence_scout_prefers_repo_map_ranked_chunks_and_caps_results():
             ]
         },
         "claims": [{"claim_id": "claim-1", "claim_text": "Provides an agent tool prompt."}],
-        "chunk_index": {"chunks_by_id": chunks},
+        "chunk_index": {"chunks_by_id": {}},
         "repo_map": {
             "files": {
-                "src/core.ts": {"definitions": ["createContextTool"], "references": ["tool", "prompt"]},
+                "src/core.ts": {"definitions": ["createContextTool"], "references": ["tool", "prompt"], "category": "source"},
             },
             "area_file_ranks": {"agent-and-llm": {"src/core.ts": 1.0}},
+            "definition_ranks": {"src/core.ts::createContextTool": 0.9},
         },
     }
 
     result = evidence_scout(state)
 
-    assert result["selected_chunks"][0]["file_path"] == "src/core.ts"
-    assert len(result["selected_chunks"]) <= 15
+    # ReAct 모드: selected_chunks는 빈 리스트 (LLM이 도구로 탐색)
+    assert result["selected_chunks"] == []
+    # 구조 지도가 search_attempt에 포함됨
+    assert "structure_map" in result["search_attempt"]
+    assert "src/core.ts" in result["search_attempt"]["structure_map"]
+    assert result["search_attempt"]["mode"] == "react"
 
 
 def test_repository_synthesizer_marks_required_task_insufficient():
@@ -321,6 +369,42 @@ def test_finalize_analysis_builds_schema_valid_result():
     assert quality_gate({**state, **result})["quality_gate_result"]["critical_errors"] == []
 
 
+def test_finalize_analysis_uses_area_explorer_agent_type_when_synthesis_lacks_it():
+    state = {
+        "synthesis": {"analysis_status": "completed"},
+        "agent_type": "ToolUse",
+        "area_findings": [
+            {
+                "area_id": area_id,
+                "area_name": area_name,
+                "status": "confirmed",
+                "summary": "요약",
+                "findings": [],
+                "limitations": [],
+                "unresolved_questions": [],
+            }
+            for area_id, area_name in [
+                ("project-purpose", "프로젝트 목적과 주요 기능"),
+                ("execution-flow", "진입점과 핵심 실행 흐름"),
+                ("architecture-and-modules", "아키텍처와 모듈 관계"),
+                ("agent-and-llm", "Agent·LLM 핵심 로직"),
+                ("tools-and-integrations", "Tool·외부 서비스 연동"),
+                ("state-and-storage", "상태·메모리·데이터 저장"),
+                ("configuration-and-deployment", "설정·실행·배포 방법"),
+                ("examples-and-tests", "예제·테스트·확장 지점"),
+            ]
+        ],
+        "evidence_refs": [],
+        "evidence_signals": [],
+        "risk_signals": [],
+        "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
+    }
+
+    result = finalize_analysis(state)
+
+    assert result["final_result"]["agent_type"] == "ToolUse"
+
+
 def test_finalize_analysis_builds_document_contract_result():
     state = {
         "synthesis": {
@@ -332,13 +416,37 @@ def test_finalize_analysis_builds_document_contract_result():
                 "dependencies": ["langgraph"],
             },
         },
-        "content_chunks": [
+        "area_findings": [
             {
+                "area_id": area_id,
+                "area_name": area_name,
+                "status": "confirmed",
+                "summary": "요약",
+                "findings": [],
+                "limitations": [],
+                "unresolved_questions": [],
+            }
+            for area_id, area_name in [
+                ("project-purpose", "프로젝트 목적과 주요 기능"),
+                ("execution-flow", "진입점과 핵심 실행 흐름"),
+                ("architecture-and-modules", "아키텍처와 모듈 관계"),
+                ("agent-and-llm", "Agent·LLM 핵심 로직"),
+                ("tools-and-integrations", "Tool·외부 서비스 연동"),
+                ("state-and-storage", "상태·메모리·데이터 저장"),
+                ("configuration-and-deployment", "설정·실행·배포 방법"),
+                ("examples-and-tests", "예제·테스트·확장 지점"),
+            ]
+        ],
+        "evidence_refs": [
+            {
+                "id": "ref-1",
+                "source_type": "code",
+                "path": "src/server.py",
+                "description": "server implementation",
                 "chunk_id": "chunk-0001",
-                "file_path": "src/server.py",
-                "content": "def create_app():\n    return app\n",
                 "line_start": 1,
                 "line_end": 2,
+                "content_excerpt": "def create_app():\n    return app\n",
                 "content_hash": "sha256:" + "1" * 64,
             }
         ],
@@ -353,6 +461,142 @@ def test_finalize_analysis_builds_document_contract_result():
     assert len(final_result["report_sections"]) == 11
     assert final_result["evidence_refs"][0]["chunk_id"] == "chunk-0001"
     assert quality_gate({**state, **result})["quality_gate_result"]["critical_errors"] == []
+
+
+def test_finalize_analysis_fallback_report_mentions_evidence_paths():
+    state = {
+        "area_findings": [
+            {
+                "area_id": aid,
+                "area_name": aname,
+                "status": "partially_confirmed",
+                "summary": f"{aname} summary",
+                "findings": [
+                    {
+                        "content": f"{aname} finding",
+                        "type": "fact",
+                        "evidence_refs": ["ref-1"],
+                    }
+                ],
+                "limitations": [],
+                "unresolved_questions": [],
+            }
+            for aid, aname in COMMON_ANALYSIS_AREAS
+        ],
+        "evidence_refs": [
+            {
+                "id": "ref-1",
+                "source_type": "code",
+                "path": "src/server.py",
+                "description": "server implementation",
+                "line_start": 1,
+                "line_end": 1,
+                "content_excerpt": "def create_app(): pass",
+                "content_hash": "sha256:" + "1" * 64,
+            }
+        ],
+        "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
+    }
+
+    result = finalize_analysis(state)
+    first_body = result["final_result"]["report_sections"][0]["body_markdown"]
+
+    assert "src/server.py:1-1" in first_body
+    assert "def create_app(): pass" in first_body
+
+
+def test_finalize_analysis_skip_finalize_agent_env_uses_evidence_fallback(monkeypatch):
+    monkeypatch.setenv("AGENTTRACE_SKIP_FINALIZE_AGENT", "1")
+    state = {
+        "area_findings": [
+            {
+                "area_id": aid,
+                "area_name": aname,
+                "status": "partially_confirmed",
+                "summary": f"{aname} summary",
+                "findings": [],
+                "limitations": [],
+                "unresolved_questions": [],
+            }
+            for aid, aname in COMMON_ANALYSIS_AREAS
+        ],
+        "evidence_refs": [
+            {
+                "id": "ref-1",
+                "source_type": "code",
+                "path": "src/server.py",
+                "description": "server implementation",
+                "line_start": 1,
+                "line_end": 1,
+                "content_excerpt": "def create_app(): pass",
+                "content_hash": "sha256:" + "1" * 64,
+            }
+        ],
+        "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
+    }
+
+    result = finalize_analysis(state)
+
+    assert "src/server.py:1-1" in result["final_result"]["report_sections"][0]["body_markdown"]
+
+
+def test_finalize_analysis_fallback_report_uses_section_specific_content(monkeypatch):
+    monkeypatch.setenv("AGENTTRACE_SKIP_FINALIZE_AGENT", "1")
+    area_findings = []
+    for aid, aname in COMMON_ANALYSIS_AREAS:
+        evidence_id = "ref-exec" if aid == "execution-flow" else "ref-purpose"
+        area_findings.append(
+            {
+                "area_id": aid,
+                "area_name": aname,
+                "status": "partially_confirmed",
+                "summary": f"{aname} summary",
+                "findings": [
+                    {
+                        "content": f"{aname} finding",
+                        "type": "fact",
+                        "evidence_refs": [evidence_id],
+                    }
+                ],
+                "limitations": [],
+                "unresolved_questions": [],
+            }
+        )
+    state = {
+        "area_findings": area_findings,
+        "evidence_refs": [
+            {
+                "id": "ref-purpose",
+                "source_type": "doc",
+                "path": "README.md",
+                "description": "project overview",
+                "line_start": 1,
+                "line_end": 2,
+                "content_excerpt": "# Repo\nAgent tool docs",
+                "content_hash": "sha256:" + "1" * 64,
+            },
+            {
+                "id": "ref-exec",
+                "source_type": "code",
+                "path": "src/server.ts",
+                "description": "server entrypoint",
+                "line_start": 1,
+                "line_end": 1,
+                "content_excerpt": "export function createServer() {}",
+                "content_hash": "sha256:" + "2" * 64,
+            },
+        ],
+        "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
+    }
+
+    result = finalize_analysis(state)
+    bodies = [section["body_markdown"] for section in result["final_result"]["report_sections"]]
+    execution_body = result["final_result"]["report_sections"][3]["body_markdown"]
+
+    assert all("수집된 AreaFinding과 EvidenceRef" not in body for body in bodies)
+    assert "src/server.ts:1-1" in execution_body
+    assert "README.md:1-2" not in execution_body
+    assert len(set(bodies)) > 3
 
 
 def test_quality_gate_rejects_document_contract_reference_break():
@@ -378,6 +622,103 @@ def test_quality_gate_rejects_document_contract_reference_break():
     assert "AnalysisResult schema invalid" in gate["quality_errors"]
 
 
+def test_quality_gate_rejects_confirmed_finding_without_hydrated_evidence():
+    state = {
+        "final_result": {
+            "analysis_status": "completed",
+            "agent_type": "ToolUse",
+            "area_findings": [
+                {
+                    "area_id": aid,
+                    "area_name": aname,
+                    "status": "confirmed",
+                    "summary": "confirmed summary",
+                    "findings": [
+                        {
+                            "content": "confirmed claim",
+                            "type": "fact",
+                            "evidence_refs": ["ref-1"],
+                        }
+                    ],
+                    "limitations": [],
+                    "unresolved_questions": [],
+                }
+                for aid, aname in COMMON_ANALYSIS_AREAS
+            ],
+            "evidence_refs": [
+                {
+                    "id": "ref-1",
+                    "source_type": "code",
+                    "path": "src/app.py",
+                    "description": "missing hydrated fields",
+                }
+            ],
+            "report_sections": [],
+            "evidence_signals": [],
+            "risk_signals": [],
+            "follow_up_guide": {"ko": "확인", "en": "Check"},
+            "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
+        }
+    }
+
+    gate = quality_gate(state)
+
+    assert gate["quality_gate_result"]["critical_errors"]
+    assert "confirmed evidence ref missing content_excerpt" in gate["quality_gate_result"]["critical_errors"]
+
+
+def test_quality_gate_rejects_excerpt_mismatch_when_source_available(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "app.py").write_text("alpha\nbeta\n", encoding="utf-8")
+    state = {
+        "local_repo_dir": str(repo),
+        "final_result": {
+            "analysis_status": "completed",
+            "agent_type": "ToolUse",
+            "area_findings": [
+                {
+                    "area_id": aid,
+                    "area_name": aname,
+                    "status": "confirmed",
+                    "summary": "confirmed summary",
+                    "findings": [
+                        {
+                            "content": "confirmed claim",
+                            "type": "fact",
+                            "evidence_refs": ["ref-1"],
+                        }
+                    ],
+                    "limitations": [],
+                    "unresolved_questions": [],
+                }
+                for aid, aname in COMMON_ANALYSIS_AREAS
+            ],
+            "evidence_refs": [
+                {
+                    "id": "ref-1",
+                    "source_type": "code",
+                    "path": "src/app.py",
+                    "description": "wrong excerpt",
+                    "line_start": 2,
+                    "line_end": 2,
+                    "content_excerpt": "not beta",
+                    "content_hash": "sha256:" + "0" * 64,
+                }
+            ],
+            "report_sections": [],
+            "evidence_signals": [],
+            "risk_signals": [],
+            "follow_up_guide": {"ko": "확인", "en": "Check"},
+            "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
+        },
+    }
+
+    gate = quality_gate(state)
+
+    assert any("excerpt mismatch" in error for error in gate["quality_gate_result"]["critical_errors"])
+
+
 def test_persist_analysis_renders_report_markdown_from_sections():
     state = {
         "run_id": "run-1",
@@ -400,6 +741,39 @@ def test_persist_analysis_renders_report_markdown_from_sections():
 
     assert payload["analysis_report"]["body_markdown"].startswith("# 1. 핵심 요약")
     assert "```mermaid" in payload["analysis_report"]["body_markdown"]
+
+
+def test_persist_analysis_trace_contains_evaluation_artifacts():
+    state = {
+        "run_id": "run-1",
+        "input_manifest": {"source_file_count": 1},
+        "precheck_result": {"status": "ok"},
+        "evidence_refs": [
+            {
+                "ref_id": "src-1",
+                "path": "src/app.py",
+                "line_start": 10,
+                "line_end": 12,
+                "content_excerpt": "def run():",
+                "content_hash": "sha256:abc",
+            }
+        ],
+        "evidence_signals": [{"path": "src/app.py", "signal": "tool_loop"}],
+        "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
+        "quality_gate_result": {"critical_errors": []},
+        "final_result": {"status": "COMPLETED", "report_sections": []},
+    }
+
+    result = persist_analysis(state)
+
+    trace = result["callback_payload"]["trace"]
+    assert trace["input_manifest"] == state["input_manifest"]
+    assert trace["precheck_result"] == state["precheck_result"]
+    assert trace["evidence_refs"] == state["evidence_refs"]
+    assert trace["evidence_signals"] == state["evidence_signals"]
+    assert trace["analysis_limitations"] == state["analysis_limitations"]
+    assert trace["quality_gate_result"] == state["quality_gate_result"]
+    assert trace["final_result"] == state["final_result"]
 
 
 def test_validate_mermaid_syntax():
@@ -451,31 +825,9 @@ def test_finalize_analysis_with_llm_success(monkeypatch):
     """synthesis가 ReportBodyResult, Mermaid가 MermaidResult로 분리 동작."""
     import agenttrace.agents.analysis.nodes.finalize_analysis as fa_module
     from agenttrace.agents.analysis.nodes.finalize_analysis import (
-        BatchAnalysisResult, ReportBodyResult, ReportBodySection, MermaidResult,
+        ReportBodyResult, ReportBodySection, MermaidResult,
     )
-    from agenttrace.agents.analysis.schemas.result import AreaFinding
-
-    class FakeBatchModel:
-        def invoke(self, prompt_value):
-            return BatchAnalysisResult(
-                area_findings=[
-                    AreaFinding(
-                        area_id=area_id, area_name=area_name,
-                        status="confirmed", summary="요약", findings=[]
-                    )
-                    for area_id, area_name in [
-                        ("project-purpose", "프로젝트 목적과 주요 기능"),
-                        ("execution-flow", "진입점과 핵심 실행 흐름"),
-                        ("architecture-and-modules", "아키텔쳐와 모듈 관계"),
-                        ("agent-and-llm", "Agent·LLM 핵심 로직"),
-                        ("tools-and-integrations", "Tool·외부 서비스 연동"),
-                        ("state-and-storage", "상태·메모리·데이터 저장"),
-                        ("configuration-and-deployment", "설정·실행·배포 방법"),
-                        ("examples-and-tests", "예제·테스트·확장 지점"),
-                    ]
-                ],
-                evidence_refs=[]
-            )
+    from agenttrace.agents.analysis.schemas.result import COMMON_ANALYSIS_AREAS
 
     class FakeBodyModel:
         def invoke(self, prompt_value):
@@ -494,8 +846,6 @@ def test_finalize_analysis_with_llm_success(monkeypatch):
 
     class FakeModel:
         def with_structured_output(self, schema):
-            if schema == BatchAnalysisResult:
-                return FakeBatchModel()
             if schema == ReportBodyResult:
                 return FakeBodyModel()
             if schema == MermaidResult:
@@ -517,7 +867,20 @@ def test_finalize_analysis_with_llm_success(monkeypatch):
     state = {
         "readme": "Project Readme",
         "synthesis": {"analysis_status": "completed", "agent_type": "Unknown"},
-        "claims": [], "evidence_signals": [], "task_results": [],
+        "area_findings": [
+            {
+                "area_id": area_id,
+                "area_name": area_name,
+                "status": "confirmed",
+                "summary": "요약",
+                "findings": [],
+                "limitations": [],
+                "unresolved_questions": [],
+            }
+            for area_id, area_name in COMMON_ANALYSIS_AREAS
+        ],
+        "evidence_refs": [],
+        "evidence_signals": [],
         "risk_signals": [],
         "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
     }
@@ -536,19 +899,9 @@ def test_finalize_analysis_with_llm_mermaid_retry(monkeypatch):
     """Mermaid 1회 invalid → retry → valid 반환 경로."""
     import agenttrace.agents.analysis.nodes.finalize_analysis as fa_module
     from agenttrace.agents.analysis.nodes.finalize_analysis import (
-        BatchAnalysisResult, ReportBodyResult, ReportBodySection, MermaidResult,
+        ReportBodyResult, ReportBodySection, MermaidResult,
     )
-    from agenttrace.agents.analysis.schemas.result import AreaFinding
-
-    class FakeBatchModel:
-        def invoke(self, prompt_value):
-            return BatchAnalysisResult(
-                area_findings=[
-                    AreaFinding(area_id="execution-flow", area_name="진입점과 핵심 실행 흐름",
-                                status="confirmed", summary="요약", findings=[])
-                ],
-                evidence_refs=[]
-            )
+    from agenttrace.agents.analysis.schemas.result import COMMON_ANALYSIS_AREAS
 
     class FakeBodyModel:
         def invoke(self, prompt_value):
@@ -577,8 +930,6 @@ def test_finalize_analysis_with_llm_mermaid_retry(monkeypatch):
 
     class FakeModel:
         def with_structured_output(self, schema):
-            if schema == BatchAnalysisResult:
-                return FakeBatchModel()
             if schema == ReportBodyResult:
                 return FakeBodyModel()
             if schema == MermaidResult:
@@ -600,7 +951,20 @@ def test_finalize_analysis_with_llm_mermaid_retry(monkeypatch):
     state = {
         "readme": "Project Readme",
         "synthesis": {"analysis_status": "completed", "agent_type": "Unknown"},
-        "claims": [], "evidence_signals": [], "task_results": [],
+        "area_findings": [
+            {
+                "area_id": area_id,
+                "area_name": area_name,
+                "status": "confirmed",
+                "summary": "요약",
+                "findings": [],
+                "limitations": [],
+                "unresolved_questions": [],
+            }
+            for area_id, area_name in COMMON_ANALYSIS_AREAS
+        ],
+        "evidence_refs": [],
+        "evidence_signals": [],
         "risk_signals": [],
         "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
     }
@@ -620,19 +984,9 @@ def test_finalize_analysis_with_llm_mermaid_fail_after_retry(monkeypatch):
     """Mermaid 2회 모두 invalid → None 반환 (섭션에서 mermaid_diagram=None)."""
     import agenttrace.agents.analysis.nodes.finalize_analysis as fa_module
     from agenttrace.agents.analysis.nodes.finalize_analysis import (
-        BatchAnalysisResult, ReportBodyResult, ReportBodySection, MermaidResult,
+        ReportBodyResult, ReportBodySection, MermaidResult,
     )
-    from agenttrace.agents.analysis.schemas.result import AreaFinding
-
-    class FakeBatchModel:
-        def invoke(self, prompt_value):
-            return BatchAnalysisResult(
-                area_findings=[
-                    AreaFinding(area_id="execution-flow", area_name="진입점",
-                                status="confirmed", summary="요약", findings=[])
-                ],
-                evidence_refs=[]
-            )
+    from agenttrace.agents.analysis.schemas.result import COMMON_ANALYSIS_AREAS
 
     class FakeBodyModel:
         def invoke(self, prompt_value):
@@ -652,8 +1006,6 @@ def test_finalize_analysis_with_llm_mermaid_fail_after_retry(monkeypatch):
 
     class FakeModel:
         def with_structured_output(self, schema):
-            if schema == BatchAnalysisResult:
-                return FakeBatchModel()
             if schema == ReportBodyResult:
                 return FakeBodyModel()
             if schema == MermaidResult:
@@ -675,7 +1027,20 @@ def test_finalize_analysis_with_llm_mermaid_fail_after_retry(monkeypatch):
     state = {
         "readme": "Project Readme",
         "synthesis": {"analysis_status": "completed", "agent_type": "Unknown"},
-        "claims": [], "evidence_signals": [], "task_results": [],
+        "area_findings": [
+            {
+                "area_id": area_id,
+                "area_name": area_name,
+                "status": "confirmed",
+                "summary": "요약",
+                "findings": [],
+                "limitations": [],
+                "unresolved_questions": [],
+            }
+            for area_id, area_name in COMMON_ANALYSIS_AREAS
+        ],
+        "evidence_refs": [],
+        "evidence_signals": [],
         "risk_signals": [],
         "analysis_limitations": {"missing_inputs": [], "truncated_inputs": [], "notes": []},
     }
@@ -725,35 +1090,6 @@ def test_generate_mermaid_for_section_returns_none_on_failure(monkeypatch):
         readme="# Test", area_summary=""
     )
     assert result is None
-
-
-
-
-
-from agenttrace.agents.analysis.nodes.finalize_analysis import _build_area_findings
-
-def test_build_area_findings_invokes_all_three_batches(monkeypatch):
-    """3개 배치가 모두 호출되는지 확인 (call_count 기반, timing assertion 없음)."""
-    import agenttrace.agents.analysis.nodes.finalize_analysis as fa_module
-    from unittest.mock import MagicMock
-
-    mock_model = MagicMock()
-    mock_model.with_structured_output.return_value = mock_model
-    mock_model.invoke.return_value = MagicMock(area_findings=[], evidence_refs=[])
-    monkeypatch.setattr(fa_module, "build_openai_finalize_model", lambda: mock_model)
-    monkeypatch.setattr(fa_module, "get_settings", lambda: MagicMock(openai_api_key="test"))
-
-    state = {"readme": "# Test", "file_tree": [], "content_chunks": []}
-    _build_area_findings(state, [{"id": "ref-1", "path": "README.md",
-                                   "description": "d", "source_type": "doc",
-                                   "symbol": None, "chunk_id": None,
-                                   "line_start": None, "line_end": None,
-                                   "content_excerpt": None, "content_hash": None}])
-
-    # 배치 3개가 모두 호출됨
-    assert mock_model.invoke.call_count == 3
-
-
 from agenttrace.agents.analysis.nodes.finalize_analysis import (
     _compact_area_findings,
     _compact_evidence_refs,
@@ -769,23 +1105,26 @@ def test_compact_area_findings_reduces_size_and_preserves_unresolved():
             "summary": "이 프로젝트는 X를 합니다.",
             "findings": [
                 {"content": f"finding {i}", "type": "fact", "evidence_refs": [f"ref-{i}"]}
-                for i in range(1, 5)
+                for i in range(1, 8)
             ],
-            "limitations": ["한계 1", "한계 2", "한계 3"],
-            "unresolved_questions": ["질문 A", "질문 B", "질문 C"],
+            "limitations": ["한계 1", "한계 2", "한계 3", "한계 4"],
+            "unresolved_questions": ["질문 A", "질문 B", "질문 C", "질문 D"],
         }
     ]
     result = _compact_area_findings(findings)
     assert "project-purpose" in result
     assert "confirmed" in result
-    # top-3 findings만 포함
-    assert "finding 4" not in result
-    # limitations top-2만 포함
-    assert "한계 3" not in result
-    # unresolved_questions top-2 보존 (섹션 11 품질)
+    assert "area_name" in result
+    # top-5 findings만 포함
+    assert "finding 5" in result
+    assert "finding 6" not in result
+    # limitations top-3만 포함
+    assert "한계 3" in result
+    assert "한계 4" not in result
+    # unresolved_questions top-3 보존
     assert "질문 A" in result
-    assert "질문 B" in result
-    assert "질문 C" not in result
+    assert "질문 C" in result
+    assert "질문 D" not in result
 
 
 def test_compact_evidence_refs_excludes_content_excerpt():
@@ -801,7 +1140,7 @@ def test_compact_evidence_refs_excludes_content_excerpt():
     result = _compact_evidence_refs(refs)
     assert "ref-1" in result
     assert "src/main.py" in result
-    assert "def main():" not in result  # content_excerpt 제외
+    assert "def main():" in result  # content_excerpt 포함 (품질 개선)
 
 
 def test_finalize_model_config_defaults():

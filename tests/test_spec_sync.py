@@ -3,22 +3,44 @@ import re
 from agenttrace.agents.analysis.schemas.result import COMMON_ANALYSIS_AREAS
 from agenttrace.agents.analysis.nodes.finalize_analysis import REPORT_SECTION_NAMES
 
+EXPECTED_REFERENCE_DOCS = {
+    "AI_ANALYSIS_SPEC.md",
+    "ANALYSIS_QUALITY_EVALUATION_GUIDE.md",
+    "CONTEXT7_ANALYSIS_EVALUATION.md",
+}
+
+
+def test_expected_reference_docs_are_current():
+    reference_dir = Path("docs/reference/artifacts/current")
+    missing = sorted(name for name in EXPECTED_REFERENCE_DOCS if not (reference_dir / name).exists())
+
+    assert not missing, (
+        "docs/reference is missing expected analysis reference docs. "
+        "Run `rtk git -C docs/reference pull` and update EXPECTED_REFERENCE_DOCS if upstream changed: "
+        + ", ".join(missing)
+    )
+    assert "ANALYSIS_AGENT_IMPLEMENTATION_EVAL_SPEC.md" not in EXPECTED_REFERENCE_DOCS
+
+
+def test_project_guidance_does_not_require_removed_eval_spec():
+    guidance = Path("AGENTS.md").read_text(encoding="utf-8")
+
+    assert "ANALYSIS_AGENT_IMPLEMENTATION_EVAL_SPEC.md" not in guidance
+
+
 def test_common_areas_sync_with_spec_markdown():
     spec_path = Path("docs/reference/artifacts/current/AI_ANALYSIS_SPEC.md")
     assert spec_path.exists(), "스펙 문서가 존재하지 않습니다."
     
     content = spec_path.read_text(encoding="utf-8")
     
-    # AI_ANALYSIS_SPEC.md의 3대 분석 실행 묶음 설명부에서 영역 ID와 한국어 명칭 추출
-    # 패턴 예: 영역 3: **아키텍처와 모듈 관계** (`architecture-and-modules`)
-    spec_areas = re.findall(r"영역 \d+:\s+\*\*([^*]+)\*\*\s+\(\\?`([^`]+)\\?`\)", content)
-    assert len(spec_areas) == 8, f"스펙에서 8개 영역을 찾지 못했습니다 (찾은 개수: {len(spec_areas)})"
-    
+    section_block = content.split("### 6.6 공통 분석 영역 (8대 영역)")[1].split("### 6.7")[0]
+    spec_area_names = re.findall(r"\d+\.\s+\*\*([^*]+)\*\*:", section_block)
+    assert len(spec_area_names) == 8, f"스펙에서 8개 영역을 찾지 못했습니다 (찾은 개수: {len(spec_area_names)})"
+
     code_areas = dict(COMMON_ANALYSIS_AREAS)
-    
-    for name, area_id in spec_areas:
-        assert area_id in code_areas, f"스펙의 영역 ID '{area_id}'가 코드(COMMON_ANALYSIS_AREAS)에 존재하지 않습니다."
-        assert code_areas[area_id] == name, f"영역 ID '{area_id}'의 이름 불일치: 스펙='{name}', 코드='{code_areas[area_id]}'"
+
+    assert list(code_areas.values()) == spec_area_names
 
 def test_report_sections_sync_with_spec_markdown():
     spec_path = Path("docs/reference/artifacts/current/AI_ANALYSIS_SPEC.md")

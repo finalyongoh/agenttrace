@@ -62,8 +62,9 @@ class AnalysisInputAssembler:
             "external_ingest_enabled": request.external_ingest.enabled,
         }
         source_files = self.provided.load(request)
+        deferred_paths: list[str] = []
 
-        # 1순위: GitHub API 직접 수집
+        # 1순위: GitHub API 직접 수집 (지연 fetch 전략)
         if not source_files and request.repository.github_url:
             from agenttrace.config import get_settings
             from agenttrace.agents.analysis.github_provider import GitHubInputProvider
@@ -77,11 +78,22 @@ class AnalysisInputAssembler:
                 # GITHUB_TOKEN이 없더라도 public repository 수집 시도를 허용
                 token = settings.github_token if settings.github_token else None
                 provider = GitHubInputProvider(token=token)
-                source_files = provider.load(
+                # 전체 트리 메타데이터 수집 (MAX_FILES 제한 없음)
+                tree_metadata = provider.load_tree_metadata(
                     github_url=request.repository.github_url,
                     commit_sha=commit_sha,
                 )
+                # 전체 소스 파일 내용 fetch — algorithm.md §22.4:
+                # PageRank가 낮더라도 인덱스에서는 제거하지 않는다.
+                # critical_config는 항상 포함 보장, 나머지도 구조 분석 대상이므로 전부 fetch.
+                all_paths = [b["path"] for b in tree_metadata]
+                source_files = provider.fetch_file_contents(
+                    github_url=request.repository.github_url,
+                    paths=all_paths,
+                    commit_sha=commit_sha,
+                )
                 input_manifest["source_provider"] = "github_api"
+                input_manifest["deferred_file_paths"] = []
             except Exception as exc:
                 missing_inputs.append("github_source_files")
                 input_manifest["github_error"] = str(exc)
@@ -96,7 +108,7 @@ class AnalysisInputAssembler:
                 missing_inputs.append("gitingest_file_content")
                 input_manifest["external_ingest_error"] = str(exc)
 
-        if not source_files:
+        if not source_files and not deferred_paths:
             missing_inputs.append("source_files")
 
         input_manifest["source_file_count"] = len(source_files)
@@ -107,5 +119,6 @@ class AnalysisInputAssembler:
             analysis_mode="normal" if source_files else "limited",
             missing_inputs=sorted(set(missing_inputs)),
             input_manifest=input_manifest,
+            deferred_file_paths=deferred_paths,
         )
 

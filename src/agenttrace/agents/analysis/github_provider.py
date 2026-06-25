@@ -28,9 +28,6 @@ SOURCE_EXTENSIONS = {
 # 단일 파일 최대 크기 (bytes) — 500KB 초과 시 skip
 MAX_FILE_SIZE = 500_000
 
-# 레포 전체 파일 수 상한
-MAX_FILES = 300
-
 
 def _parse_owner_repo(github_url: str) -> tuple[str, str]:
     """https://github.com/owner/repo → (owner, repo)"""
@@ -101,20 +98,15 @@ def _is_critical_config(path: str) -> bool:
     return False
 
 
-def _select_blobs(blobs: list[dict]) -> list[dict]:
-    """MAX_FILES 제한 안에서 파일을 선별한다.
+def _filter_blobs(blobs: list[dict]) -> list[dict]:
+    """전체 파일을 유지하며 critical_config 여부만 태깅한다.
 
-    중요 설정 파일은 항상 포함을 보장한다.
-    나머지 슬롯은 입력 순서(트리 API 반환 순서)를 유지한 대로 체운다.
+    MAX_FILES 제한 제거 — algorithm.md §22.4.
+    내용 fetch는 지연 수행되므로 메타데이터만으로는 비용 미발생.
     """
-    if len(blobs) <= MAX_FILES:
-        return blobs
-
-    guaranteed = [b for b in blobs if _is_critical_config(b["path"])]
-    rest = [b for b in blobs if not _is_critical_config(b["path"])]
-
-    remaining_slots = MAX_FILES - len(guaranteed)
-    return guaranteed + rest[:max(remaining_slots, 0)]
+    for blob in blobs:
+        blob["is_critical_config"] = _is_critical_config(blob["path"])
+    return blobs
 
 
 class GitHubInputProvider:
@@ -136,9 +128,23 @@ class GitHubInputProvider:
         github_url: str,
         commit_sha: str = "HEAD",
     ) -> list[SourceFile]:
+        """하위 호환용: 전체 트리 메타데이터 수집 후 모든 파일 내용을 fetch."""
+        tree_metadata = self.load_tree_metadata(github_url, commit_sha)
+        all_paths = [b["path"] for b in tree_metadata]
+        return self.fetch_file_contents(github_url, all_paths, commit_sha)
+
+    def load_tree_metadata(
+        self,
+        github_url: str,
+        commit_sha: str = "HEAD",
+    ) -> list[dict]:
+        """파일 트리 메타데이터만 수집 (내용 fetch 없음).
+
+        algorithm.md §22.4: 전체 리포지토리를 구조 분석 후보로 유지.
+        MAX_FILES 제한 없이 모든 소스 파일의 메타데이터를 반환한다.
+        """
         owner, repo = _parse_owner_repo(github_url)
 
-        # 1. 파일 트리 전체 조회
         tree_url = f"{self.API_BASE}/repos/{owner}/{repo}/git/trees/{commit_sha}?recursive=1"
         resp = self._client.get(tree_url)
         resp.raise_for_status()
@@ -147,27 +153,39 @@ class GitHubInputProvider:
         if data.get("truncated"):
             logger.warning("GitHub tree response truncated for %s/%s", owner, repo)
 
-        # 2. 소스 파일 필터링 및 중요 파일 보유 선별
         all_blobs = [
             item for item in data.get("tree", [])
             if item["type"] == "blob"
             and _is_source_file(item["path"], item.get("size", 0))
         ]
-        blobs = _select_blobs(all_blobs)
+        blobs = _filter_blobs(all_blobs)
 
         logger.info(
-            "GitHub provider: %d source files selected from %s/%s@%s",
+            "GitHub provider: %d source files in tree from %s/%s@%s",
             len(blobs), owner, repo, commit_sha,
         )
+        return blobs
 
-        # 3. 파일 내용 병렬 fetch
+    def fetch_file_contents(
+        self,
+        github_url: str,
+        paths: list[str],
+        commit_sha: str = "HEAD",
+    ) -> list[SourceFile]:
+        """지정된 경로의 파일 내용만 fetch (지연 로딩).
+
+        algorithm.md §22.4: 전체 파일을 인덱스에서 제거하지 않으면서
+        필요한 파일만 내용을 가져온다.
+        """
+        owner, repo = _parse_owner_repo(github_url)
         source_files: list[SourceFile] = []
+
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {
                 executor.submit(
-                    self._fetch_file, owner, repo, item["path"], commit_sha
-                ): item["path"]
-                for item in blobs
+                    self._fetch_file, owner, repo, path, commit_sha
+                ): path
+                for path in paths
             }
             for future in as_completed(futures):
                 path = futures[future]

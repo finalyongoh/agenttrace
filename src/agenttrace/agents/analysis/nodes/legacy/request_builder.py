@@ -6,12 +6,27 @@ MAX_TASK_PART_CHARS = 30000
 
 
 def request_builder(state: AnalysisState) -> AnalysisState:
+    """ReAct 모드에서는 pass-through. 구조 지도는 search_attempt에 이미 있다."""
     task_id = state.get("current_task_id")
+
+    # ReAct 모드: selected_chunks가 비어있으면 단일 파트 생성
+    selected_chunks = state.get("selected_chunks", [])
+    if not selected_chunks:
+        return {
+            "task_parts": [{
+                "part_id": f"{task_id}-part-001",
+                "task_id": task_id,
+                "chunks": [],
+                "char_count": 0,
+            }]
+        }
+
+    # 기존 모드: 청크가 있으면 분할 (하위 호환성)
     parts: list[dict] = []
     current_chunks: list[dict] = []
     current_count = 0
 
-    for chunk in state.get("selected_chunks", []):
+    for chunk in selected_chunks:
         content_len = chunk.get("end_byte", 0) - chunk.get("start_byte", 0)
         if content_len <= 0:
             content_len = len(chunk.get("content", "") or "")
